@@ -9,6 +9,8 @@
  *   member takes over from the latest copy. A host who drops out simply comes back as a member.
  * - Every member also keeps the latest copy on disk: when everyone has left, whoever comes back
  *   first brings the room back.
+ * - Two browsers that can't connect directly (strict NATs) talk through a third one: every message
+ *   is an envelope addressed to a person, passed on by whoever is connected to both.
  */
 import { joinRoom } from "trystero";
 import { buildSharedPack, errorMsg, handleRoomMsg, Room, type Hub, type LoadedPack, type PackHooks, type RoomSnapshot, type User } from "@kvz/game";
@@ -27,6 +29,8 @@ const JOIN_WAIT = 9000;
 /** A room not announced for this long leaves the list. */
 const LISTED_TTL = 25_000;
 const ANNOUNCE_MS = 5000;
+/** Can't get through to the keeper this long: rejoin the room's mesh to retry the connections. */
+const REJOIN_MS = 15_000;
 /** A copy saved on disk can bring a room back for this long. */
 const SAVED_TTL = 24 * 3600_000;
 
@@ -71,6 +75,12 @@ function joinLobby() {
   sendRooms = (data, opts) => rooms.send(data, opts);
   // A newcomer gets everything this browser knows.
   lobby.onPeerJoin = (peerId) => { void sendRooms?.(tableOut() as Json, { target: peerId }); };
+  // Gossip: now and then the whole list goes to one random peer, so it spreads even to those who
+  // can't connect to a room's keeper directly.
+  setInterval(() => {
+    const peers = Object.keys(lobby?.getPeers() ?? {});
+    if (peers.length && listed.size) void sendRooms?.(tableOut() as Json, { target: peers[Math.floor(Math.random() * peers.length)] });
+  }, 15_000);
   setInterval(() => {
     const now = Date.now();
     let dropped = false;
@@ -117,12 +127,25 @@ function announce(g: Game, gone = false) {
 interface StateMsg { term: number; keeper: string; rev: number; snap: RoomSnapshot; names: Record<string, { n: string; g?: Gender }> }
 interface PackData { hash: string; xml: string; files: SharedFile[] }
 
+/**
+ * Everything in a room travels in envelopes addressed to a person (or to everyone): if two browsers
+ * can't connect directly (strict NATs), the envelope goes through someone connected to both.
+ */
+type Kind = "c2s" | "s2c" | "state" | "beat" | "pack" | "wantpack" | "wantstate";
+interface Envelope { i: string; f: string; t: string; k: Kind; d: unknown; h: number }
+/** Who each person is directly connected to (and their names), from their reports. */
+interface Reach { at: number; links: Map<string, { n: string; g?: Gender }> }
+
 interface Game {
   code: string;
   mesh: Mesh;
-  send: Record<"hello" | "c2s" | "s2c" | "state" | "beat" | "pack" | "wantpack" | "wantstate", (data: Json, opts?: { target?: string }) => Promise<void>>;
-  /** Trystero peer id -> person. */
+  env: (e: Envelope, target?: string) => void;
+  hello: (target?: string) => void;
+  reachOut: () => void;
+  /** Trystero peer id -> person (direct links). */
   peers: Map<string, { userId: string; name: string; gender?: Gender }>;
+  reach: Map<string, Reach>;
+  seen: Set<string>;
   keeper?: string;
   term: number;
   last?: StateMsg;
@@ -139,47 +162,50 @@ interface Game {
   /** Members who were expected to take over and didn't: passed over next time. */
   skip: Set<string>;
   expected?: { id: string; by: number };
+  rejoinedAt: number;
 }
 let game: Game | undefined;
 
+/** Tests can pretend some people are unreachable directly: localStorage "kvz.p2p.block" = "id,id". */
+const blocked = () => new Set((localStorage.getItem("kvz.p2p.block") ?? "").split(",").filter(Boolean));
+
 function openGame(code: string): Game {
-  const mesh = joinRoom({ appId: APP_ID, rtcConfig: { iceServers: ICE } }, `room-${code}`);
   const g: Game = {
-    code, mesh, send: {} as Game["send"], peers: new Map(), term: 0, heardAt: Date.now(), users: new Map(), sentRev: -1, inRoom: false, queue: [], timers: [], skip: new Set(),
+    code, mesh: undefined as unknown as Mesh, env: () => {}, hello: () => {}, reachOut: () => {}, peers: new Map(), reach: new Map(), seen: new Set(),
+    term: 0, heardAt: Date.now(), users: new Map(), sentRev: -1, inRoom: false, queue: [], timers: [], skip: new Set(), rejoinedAt: Date.now(),
   };
-  const action = <T,>(name: keyof Game["send"], on: (data: T, peerId: string) => void) => {
-    const a = mesh.makeAction<Json>(name, { onMessage: (data, ctx) => { if (game === g) on(data as unknown as T, ctx.peerId); } });
-    g.send[name] = (data, opts) => a.send(data, opts);
+  attachMesh(g);
+  g.timers.push(setInterval(() => tick(g), 500));
+  g.timers.push(setInterval(() => g.reachOut(), 3000));
+  game = g;
+  localStorage.setItem("kvz.p2p.current", code);
+  return g;
+}
+
+/** Joins the room's mesh (again, after a retry). */
+function attachMesh(g: Game) {
+  const mesh = joinRoom({ appId: APP_ID, rtcConfig: { iceServers: ICE } }, `room-${g.code}`);
+  g.mesh = mesh;
+  g.peers.clear();
+  const live = () => game === g && g.mesh === mesh;
+  const hello = mesh.makeAction<Json>("hello", { onMessage: (d, ctx) => { if (live()) onHello(g, ctx.peerId, d as unknown as { u: string; n: string; g?: Gender }); } });
+  const reach = mesh.makeAction<Json>("reach", { onMessage: (d, ctx) => { if (live()) onReach(g, ctx.peerId, d as unknown as { u: string; r: [string, string, Gender?][] }); } });
+  const env = mesh.makeAction<Json>("env", { onMessage: (d, ctx) => { if (live()) onEnvelope(g, ctx.peerId, d as unknown as Envelope); } });
+  g.hello = (target) => { void hello.send({ u: me.id, n: me.name, g: me.gender } as Json, target ? { target } : undefined); };
+  g.env = (e, target) => { void env.send(e as unknown as Json, target ? { target } : undefined); };
+  g.reachOut = () => {
+    const r = [...g.peers.values()].map((p) => [p.userId, p.name, p.gender]);
+    void reach.send({ u: me.id, r } as Json);
   };
-  action<{ u: string; n: string; g?: Gender }>("hello", (d, peerId) => onHello(g, peerId, d));
-  action<{ u: string; m: ClientMsg }>("c2s", (d, peerId) => onFromMember(g, peerId, d));
-  action<ServerMsg>("s2c", (m) => fromKeeper(g, m));
-  action<StateMsg>("state", (s, peerId) => onState(g, s, peerId));
-  action<{ term: number; keeper: string; rev: number }>("beat", (b, peerId) => onBeat(g, b, peerId));
-  action<PackData>("pack", (p) => onPack(g, p));
-  action<{ hash: string }>("wantpack", (w, peerId) => { if (g.pack && g.pack.hash === w.hash) void g.send.pack(g.pack as unknown as Json, { target: peerId }); });
-  action<object>("wantstate", (_w, peerId) => { if (g.room) sendState(g, peerId); });
-  mesh.onPeerJoin = (peerId) => {
-    void g.send.hello({ u: me.id, n: me.name, g: me.gender } as Json, { target: peerId });
-    if (g.room) {
-      sendState(g, peerId);
-      if (g.pack) void g.send.pack(g.pack as unknown as Json, { target: peerId });
-    }
-  };
+  mesh.onPeerJoin = (peerId) => { g.hello(peerId); };
   mesh.onPeerLeave = (peerId) => {
     const p = g.peers.get(peerId);
     g.peers.delete(peerId);
     if (!p) return;
-    if (g.room) {
-      const u = g.users.get(p.userId);
-      if (u && ![...g.peers.values()].some((x) => x.userId === p.userId)) { u.online = false; g.room.connectionChanged(u.id); }
-    }
-    if (p.userId === g.keeper) elect(g);
+    g.reachOut();
+    refreshOnline(g);
+    if (p.userId === g.keeper && !route(g, g.keeper)) elect(g);
   };
-  g.timers.push(setInterval(() => tick(g), 500));
-  game = g;
-  localStorage.setItem("kvz.p2p.current", code);
-  return g;
 }
 
 function peerOf(g: Game, userId: string): string | undefined {
@@ -187,18 +213,107 @@ function peerOf(g: Game, userId: string): string | undefined {
   return undefined;
 }
 
+/** The peer to hand an envelope for `userId` to: directly, or someone connected to them. */
+function route(g: Game, userId: string): string | undefined {
+  const direct = peerOf(g, userId);
+  if (direct) return direct;
+  const now = Date.now();
+  for (const [via, r] of g.reach) {
+    if (now - r.at > 10_000 || !r.links.has(userId)) continue;
+    const peerId = peerOf(g, via);
+    if (peerId) return peerId;
+  }
+  return undefined;
+}
+
+/** Everyone this browser can get a message to. */
+function reachable(g: Game): Set<string> {
+  const out = new Set([me.id, ...[...g.peers.values()].map((p) => p.userId)]);
+  const now = Date.now();
+  for (const [via, r] of g.reach) if (now - r.at <= 10_000 && out.has(via)) for (const id of r.links.keys()) out.add(id);
+  return out;
+}
+
+let envSeq = 0;
+/** Sends to one person ("*": everyone in the room). */
+function post(g: Game, to: string, k: Kind, d: unknown) {
+  const e: Envelope = { i: `${me.id}.${++envSeq}`, f: me.id, t: to, k, d, h: 0 };
+  if (to === "*") { g.env(e); return; }
+  const peerId = route(g, to);
+  if (peerId) g.env(e, peerId);
+}
+
+function onEnvelope(g: Game, peerId: string, e: Envelope) {
+  if (!e || typeof e.i !== "string" || typeof e.f !== "string" || g.seen.has(e.i)) return;
+  const from = g.peers.get(peerId);
+  if (!from || blocked().has(from.userId)) return;
+  // Sent directly, the sender must be who it says it is.
+  if (e.h === 0 && e.f !== from.userId) return;
+  g.seen.add(e.i);
+  if (g.seen.size > 5000) g.seen = new Set([...g.seen].slice(-2000));
+  if (e.t === me.id || e.t === "*") dispatch(g, e.f, e.k, e.d);
+  if (e.h >= 2) return;
+  const fwd = { ...e, h: e.h + 1 };
+  if (e.t !== "*" && e.t !== me.id) {
+    // Passing it on to someone this browser is connected to.
+    const next = peerOf(g, e.t);
+    if (next && next !== peerId) g.env(fwd, next);
+  } else if (e.t === "*") {
+    // A broadcast reaches those the sender can't reach directly through this browser.
+    const theirs = g.reach.get(e.f)?.links;
+    for (const [pid, p] of g.peers) if (pid !== peerId && p.userId !== e.f && !theirs?.has(p.userId)) g.env(fwd, pid);
+  }
+}
+
+function dispatch(g: Game, from: string, k: Kind, d: unknown) {
+  switch (k) {
+    case "c2s": return onFromMember(g, from, d as ClientMsg);
+    case "s2c": return fromKeeper(g, d as ServerMsg);
+    case "state": return onState(g, d as StateMsg, from);
+    case "beat": return onBeat(g, d as { term: number; keeper: string; rev: number }, from);
+    case "pack": return onPack(g, d as PackData);
+    case "wantpack": if (g.pack && g.pack.hash === (d as { hash: string })?.hash) post(g, from, "pack", g.pack); return;
+    case "wantstate": if (g.room) sendState(g, from); return;
+  }
+}
+
 function onHello(g: Game, peerId: string, d: { u: string; n: string; g?: Gender }) {
-  if (typeof d?.u !== "string") return;
+  if (typeof d?.u !== "string" || blocked().has(d.u)) return;
   g.peers.set(peerId, { userId: d.u, name: String(d.n ?? "Игрок").slice(0, 24), gender: d.g });
+  g.reachOut();
+  refreshOnline(g);
   if (d.u === g.keeper) keeperFound(g);
+  // The keeper greets a newcomer with the room and its pack.
+  if (g.room) {
+    sendState(g, d.u);
+    if (g.pack) post(g, d.u, "pack", g.pack);
+  }
+}
+
+function onReach(g: Game, peerId: string, d: { u: string; r: [string, string, Gender?][] }) {
+  const from = g.peers.get(peerId);
+  if (!from || from.userId !== d?.u || !Array.isArray(d.r)) return;
+  const links = new Map<string, { n: string; g?: Gender }>();
+  for (const [id, n, gen] of d.r) if (typeof id === "string") links.set(id, { n: String(n ?? "Игрок").slice(0, 24), g: gen });
+  g.reach.set(d.u, { at: Date.now(), links });
+  refreshOnline(g);
+  if (g.keeper && route(g, g.keeper)) keeperFound(g);
+}
+
+/** The keeper: who of the room's members can be reached right now. */
+function refreshOnline(g: Game) {
   if (!g.room) return;
-  const u = userFor(g, d.u, String(d.n ?? "Игрок").slice(0, 24), d.g);
-  const wasOffline = !u.online;
-  u.online = true;
-  if (g.room.members.has(u.id)) {
-    // Back after a drop: rejoin quietly.
-    if (wasOffline) g.room.join(u);
-    else g.room.changed();
+  const can = reachable(g);
+  for (const r of g.reach.values()) for (const [id, n] of r.links) if (!g.users.has(id)) userFor(g, id, n.n, n.g);
+  for (const p of g.peers.values()) userFor(g, p.userId, p.name, p.gender);
+  for (const u of g.users.values()) {
+    const online = can.has(u.id);
+    if (online === u.online) continue;
+    u.online = online;
+    if (!g.room.members.has(u.id)) continue;
+    // Back after a drop: rejoin quietly; gone: the room notices.
+    if (online) g.room.join(u);
+    else g.room.connectionChanged(u.id);
   }
 }
 
@@ -215,8 +330,14 @@ function userFor(g: Game, id: string, name: string, gender?: Gender): User {
 
 function sendToUser(g: Game, userId: string, m: ServerMsg) {
   if (userId === me.id) return fromKeeper(g, m);
-  const peerId = peerOf(g, userId);
-  if (peerId) void g.send.s2c(m as Json, { target: peerId });
+  post(g, userId, "s2c", m);
+}
+
+function nameOf(g: Game, userId: string): { n: string; g?: Gender } {
+  for (const p of g.peers.values()) if (p.userId === userId) return { n: p.name, g: p.gender };
+  for (const r of g.reach.values()) { const x = r.links.get(userId); if (x) return x; }
+  const u = g.users.get(userId);
+  return { n: u?.name ?? "Игрок", g: u?.gender };
 }
 
 function hubFor(g: Game): Hub {
@@ -234,7 +355,7 @@ const hooksFor = (g: Game): PackHooks => ({
       if (g.room !== room || room.phase !== "lobby") return;
       g.pack = { hash: pack.hash, xml: msg.xml, files: msg.files };
       room.setPack(pack);
-      void g.send.pack(g.pack as unknown as Json);
+      post(g, "*", "pack", g.pack);
       void saveCopy(g);
     }, (e: Error) => err(e.message === "too big" ? text("err.packSize") : e.message === "bad share" ? text("err.badShare") : e.message));
   },
@@ -245,6 +366,7 @@ function keeperHandle(g: Game, user: User, m: ClientMsg) {
   const room = g.room!;
   switch (m.t) {
     case "joinRoom": {
+      user.online = true;
       const e = room.join(user, m.password, m.asViewer);
       if (e) user.send(errorMsg(e));
       return;
@@ -258,10 +380,10 @@ function keeperHandle(g: Game, user: User, m: ClientMsg) {
   handleRoomMsg(room, user, m, hooksFor(g));
 }
 
-function onFromMember(g: Game, peerId: string, d: { u: string; m: ClientMsg }) {
-  const p = g.peers.get(peerId);
-  if (!g.room || !p || p.userId !== d?.u || !d.m) return;
-  keeperHandle(g, userFor(g, p.userId, p.name, p.gender), d.m);
+function onFromMember(g: Game, from: string, m: ClientMsg) {
+  if (!g.room || !m || typeof m.t !== "string") return;
+  const n = nameOf(g, from);
+  keeperHandle(g, userFor(g, from, n.n, n.g), m);
 }
 
 function namesOf(g: Game) {
@@ -274,11 +396,11 @@ function stateOf(g: Game): StateMsg {
   return { term: g.term, keeper: me.id, rev: g.room!.rev, snap: g.room!.snapshot(), names: namesOf(g) };
 }
 
-function sendState(g: Game, target?: string) {
+function sendState(g: Game, to = "*") {
   if (!g.room) return;
   const s = stateOf(g);
   g.last = s;
-  void g.send.state(s as unknown as Json, target ? { target } : undefined);
+  post(g, to, "state", s);
 }
 
 let lastSave = 0;
@@ -289,10 +411,19 @@ function tick(g: Game) {
   const now = Date.now();
   if (g.room) {
     if (g.room.rev !== g.sentRev) { g.sentRev = g.room.rev; sendState(g); }
-    if (now - lastBeat > BEAT_MS) { lastBeat = now; void g.send.beat({ term: g.term, keeper: me.id, rev: g.room.rev } as Json); }
+    if (now - lastBeat > BEAT_MS) { lastBeat = now; post(g, "*", "beat", { term: g.term, keeper: me.id, rev: g.room.rev }); }
     if (now - lastAnnounce > ANNOUNCE_MS) { lastAnnounce = now; announce(g); }
     if (now - lastSave > 5000) { lastSave = now; void saveCopy(g); }
-  } else if (g.last && now - g.heardAt > KEEPER_SILENT) elect(g);
+    return;
+  }
+  // No word from the keeper and no way to it: maybe the connection itself is stuck. Try again.
+  if (g.keeper && !route(g, g.keeper) && now - g.heardAt > REJOIN_MS && now - g.rejoinedAt > REJOIN_MS) {
+    g.rejoinedAt = now;
+    void g.mesh.leave();
+    attachMesh(g);
+    return;
+  }
+  if (g.last && now - g.heardAt > KEEPER_SILENT) elect(g);
 }
 
 /* ---------- following a room ---------- */
@@ -301,8 +432,8 @@ function newer(g: Game, term: number, keeper: string) {
   return term > g.term || (term === g.term && (!g.keeper || keeper <= g.keeper));
 }
 
-function onState(g: Game, s: StateMsg, peerId: string) {
-  if (!s?.snap || typeof s.term !== "number") return;
+function onState(g: Game, s: StateMsg, from: string) {
+  if (!s?.snap || typeof s.term !== "number" || s.keeper !== from) return;
   if (g.room) {
     // Two keepers (after a split): the later term wins, then the smaller id.
     if (s.term > g.term || (s.term === g.term && s.keeper < me.id)) stepDown(g);
@@ -316,22 +447,22 @@ function onState(g: Game, s: StateMsg, peerId: string) {
   g.skip.clear();
   g.expected = undefined;
   const packHash = s.snap.packHash;
-  if (packHash && g.pack?.hash !== packHash) void g.send.wantpack({ hash: packHash } as Json, { target: peerId });
+  if (packHash && g.pack?.hash !== packHash) post(g, from, "wantpack", { hash: packHash });
   keeperFound(g);
   if (Date.now() - lastSave > 5000) { lastSave = Date.now(); void saveCopy(g); }
 }
 
-function onBeat(g: Game, b: { term: number; keeper: string; rev: number }, peerId: string) {
-  if (typeof b?.term !== "number") return;
+function onBeat(g: Game, b: { term: number; keeper: string; rev: number }, from: string) {
+  if (typeof b?.term !== "number" || b.keeper !== from) return;
   if (g.room) {
-    if (b.term > g.term || (b.term === g.term && b.keeper < me.id)) void g.send.wantstate({} as Json, { target: peerId });
+    if (b.term > g.term || (b.term === g.term && b.keeper < me.id)) post(g, from, "wantstate", {});
     return;
   }
   if (!newer(g, b.term, b.keeper)) return;
   g.term = b.term;
   g.keeper = b.keeper;
   g.heardAt = Date.now();
-  if (!g.last || g.last.rev !== b.rev || g.last.keeper !== b.keeper) void g.send.wantstate({} as Json, { target: peerId });
+  if (!g.last || g.last.rev !== b.rev || g.last.keeper !== b.keeper) post(g, from, "wantstate", {});
   keeperFound(g);
 }
 
@@ -341,22 +472,22 @@ function onPack(g: Game, p: PackData) {
   void saveCopy(g);
 }
 
-/** The keeper is known: send what waited for it. */
+/** The keeper can be reached: send what waited for it. */
 function keeperFound(g: Game) {
+  if (!g.keeper || !route(g, g.keeper)) return;
   if (g.joining) {
     clearTimeout(g.joining.timer);
     const { password, asViewer } = g.joining;
     g.joining = undefined;
     toKeeper(g, { t: "joinRoom", roomId: g.code, password, asViewer });
   }
-  if (g.keeper && peerOf(g, g.keeper)) for (const m of g.queue.splice(0)) toKeeper(g, m);
+  for (const m of g.queue.splice(0)) toKeeper(g, m);
 }
 
 function toKeeper(g: Game, m: ClientMsg) {
   if (g.room) return keeperHandle(g, userFor(g, me.id, me.name, me.gender), m);
-  const peerId = g.keeper ? peerOf(g, g.keeper) : undefined;
-  if (!peerId) { g.queue.push(m); return; }
-  void g.send.c2s({ u: me.id, m } as Json, { target: peerId });
+  if (!g.keeper || !route(g, g.keeper)) { g.queue.push(m); return; }
+  post(g, g.keeper, "c2s", m);
 }
 
 /** A message from the keeper to this browser. */
@@ -380,12 +511,16 @@ function fromKeeper(g: Game, m: ServerMsg) {
 
 /* ---------- taking over ---------- */
 
-/** The keeper went quiet: the first present member (the host first) takes over. */
+/** The keeper is gone: the first member still here (the host first) takes over. */
 function elect(g: Game) {
   if (g.room || !g.last) return;
+  // Alone, this browser keeps nobody's room: it waits (otherwise its old copy could win later).
+  if (!g.peers.size) return;
+  // Someone still gets through to the keeper: it's alive, only this link is broken.
+  if (g.keeper && [...g.reach.values()].some((r) => Date.now() - r.at < 6000 && r.links.has(g.keeper!))) return;
   const snap = g.last.snap.data as { members?: { $set?: string[] }; hostId?: string };
   const members = snap.members?.$set ?? [];
-  const present = new Set([me.id, ...[...g.peers.values()].map((p) => p.userId)]);
+  const present = reachable(g);
   const silentKeeper = g.keeper;
   if (g.expected && Date.now() > g.expected.by) g.skip.add(g.expected.id);
   const cands = members.filter((id) => present.has(id) && id !== silentKeeper && !g.skip.has(id)).sort();
@@ -405,7 +540,8 @@ async function takeOver(g: Game, from: StateMsg, term: number) {
   if (g.pack) { try { pack = await buildSharedPack(g.pack.xml, g.pack.files); } catch { pack = undefined; } }
   if (game !== g || g.room) return;
   for (const [id, n] of Object.entries(from.names ?? {})) userFor(g, id, n.n, n.g);
-  for (const u of g.users.values()) u.online = u.id === me.id || !!peerOf(g, u.id);
+  const can = reachable(g);
+  for (const u of g.users.values()) u.online = can.has(u.id);
   const room = Room.restore(from.snap, hubFor(g), pack, "ev.takeover");
   g.room = room;
   g.term = term;
@@ -418,6 +554,7 @@ async function takeOver(g: Game, from: StateMsg, term: number) {
   if (!room.members.has(me.id)) room.join(self);
   room.resync();
   sendState(g);
+  if (g.pack) post(g, "*", "pack", g.pack);
   announce(g);
   for (const m of g.queue.splice(0)) keeperHandle(g, self, m);
 }
@@ -543,7 +680,7 @@ export function send(m: ClientMsg) {
       if (m.name?.trim()) me.name = m.name.trim().slice(0, 24);
       if (m.gender !== undefined) me.gender = m.gender ?? undefined;
       welcome();
-      if (game) void game.send.hello({ u: me.id, n: me.name, g: me.gender } as Json);
+      if (game) game.hello();
       if (game?.room) { userFor(game, me.id, me.name, me.gender); game.room.changed(); }
       return;
     case "listRooms":
