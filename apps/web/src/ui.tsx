@@ -142,10 +142,21 @@ function keepAspect(e: React.SyntheticEvent<HTMLImageElement | HTMLVideoElement>
  */
 export type Playback = "play" | "hold" | "keep";
 
-/** Plays as soon as it appears. Players get no controls; if the browser blocks sound, they can only switch it on. */
-function AutoMedia({ kind, src, controls, playback = "play" }: { kind: "audio" | "video"; src: string; controls: boolean; playback?: Playback }) {
+/** "WMV" for a type the browser surely can't play, else undefined. */
+function unplayable(kind: "audio" | "video", mime?: string): string | undefined {
+  if (!mime) return undefined;
+  if (document.createElement(kind).canPlayType(mime) !== "") return undefined;
+  return mime.split("/")[1].replace(/^x-(ms-)?/, "").replace("msvideo", "avi").toUpperCase();
+}
+
+/**
+ * Plays as soon as it appears. Nobody gets controls (the game decides when it plays); if the
+ * browser blocks sound, there is only a button to switch it on.
+ */
+function AutoMedia({ kind, src, mime, playback = "play" }: { kind: "audio" | "video"; src: string; mime?: string; playback?: Playback }) {
   const ref = useRef<HTMLMediaElement>(null);
   const [blocked, setBlocked] = useState(false);
+  const [broken, setBroken] = useState(() => unplayable(kind, mime));
   /** Paused by us for an answer: plays on when the answer is over. */
   const held = useRef(false);
   const mode = useRef(playback);
@@ -182,13 +193,16 @@ function AutoMedia({ kind, src, controls, playback = "play" }: { kind: "audio" |
     el.muted = false;
     el.play().then(() => setBlocked(false), () => {});
   };
-  const block = (e: React.SyntheticEvent) => { if (!controls) e.preventDefault(); };
+  const block = (e: React.SyntheticEvent) => e.preventDefault();
+  // The file is here but this browser can't decode it (WMV, AVI, an unusual codec).
+  const failed = () => setBroken((b) => b ?? unplayable(kind, mime) ?? "");
+  if (broken != null) return <span className="media-wait bad" role="status">{t.media.unsupported(kind, broken)}</span>;
   return (
     <>
       {kind === "video"
-        ? <video ref={ref as React.RefObject<HTMLVideoElement>} src={src} playsInline onLoadedMetadata={keepAspect} controls={controls} disablePictureInPicture controlsList="nodownload noplaybackrate" onContextMenu={block} />
-        : <audio ref={ref as React.RefObject<HTMLAudioElement>} src={src} controls={controls} hidden={!controls} />}
-      {kind === "audio" && !controls && <span className="eq" aria-label={t.media.audio}><i /><i /><i /><i /><i /> {t.media.audio}</span>}
+        ? <video ref={ref as React.RefObject<HTMLVideoElement>} src={src} playsInline onLoadedMetadata={keepAspect} onError={failed} disablePictureInPicture disableRemotePlayback controlsList="nodownload noplaybackrate nofullscreen" onContextMenu={block} />
+        : <audio ref={ref as React.RefObject<HTMLAudioElement>} src={src} onError={failed} hidden />}
+      {kind === "audio" && <span className="eq" aria-label={t.media.audio}><i /><i /><i /><i /><i /> {t.media.audio}</span>}
       {blocked && <button type="button" className="btn sm amber unmute" onClick={unlock}>{t.media.unmute}</button>}
     </>
   );
@@ -196,9 +210,9 @@ function AutoMedia({ kind, src, controls, playback = "play" }: { kind: "audio" |
 
 /**
  * Question content. `reading` turns on karaoke text and line-by-line pictures for the reading phase;
- * `controls` (host only) shows media controls.
+ * Sound and video have no controls for anyone: `playback` decides when they play.
  */
-export function MediaList({ items, big = true, reading, controls = false, playback }: { items: MediaView[]; big?: boolean; reading?: Reading; controls?: boolean; playback?: Playback }) {
+export function MediaList({ items, big = true, reading, playback }: { items: MediaView[]; big?: boolean; reading?: Reading; playback?: Playback }) {
   const t = useT();
   // Next to a picture or video, text is a one-line caption so the media get the room.
   const caption = big && items.some((m) => m.type === "image" || m.type === "video");
@@ -224,8 +238,8 @@ export function MediaList({ items, big = true, reading, controls = false, playba
           }
           case "say": return <p key={key} className="q-say">{t.media.host} {reading?.karaoke ? <Karaoke text={m.text ?? ""} start={start} speed={reading.speed} /> : m.text}</p>;
           case "image": return <div key={key} className="q-media visual"><WithSrc m={m}>{(src) => reading && reading.imageReveal > 0 ? <RevealImage src={src} start={start} seconds={reading.imageReveal} /> : <img src={src} alt={t.media.image} onLoad={keepAspect} />}</WithSrc></div>;
-          case "video": return <div key={key} className="q-media visual"><WithSrc m={m}>{(src) => <AutoMedia kind="video" src={src} controls={controls} playback={playback} />}</WithSrc></div>;
-          case "audio": return <div key={key} className="q-media audio"><WithSrc m={m}>{(src) => <AutoMedia kind="audio" src={src} controls={controls} playback={playback} />}</WithSrc></div>;
+          case "video": return <div key={key} className="q-media visual"><WithSrc m={m}>{(src) => <AutoMedia kind="video" src={src} mime={m.mime} playback={playback} />}</WithSrc></div>;
+          case "audio": return <div key={key} className="q-media audio"><WithSrc m={m}>{(src) => <AutoMedia kind="audio" src={src} mime={m.mime} playback={playback} />}</WithSrc></div>;
           case "html": return <p key={key}><WithSrc m={m}>{(src) => <a href={src} target="_blank" rel="noreferrer">{t.media.html}</a>}</WithSrc></p>;
         }
   }

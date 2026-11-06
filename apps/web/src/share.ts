@@ -106,7 +106,10 @@ function durationOf(bytes: Uint8Array): Promise<number | undefined> {
   });
 }
 
-export async function preparePack(file: File, onProgress: (p: number) => void): Promise<{ xml: string; files: SharedFile[] }> {
+/** Video and sound formats no browser plays, by extension. */
+const DEAD_EXT = /\.(wmv|avi|flv|wma|mpg|mpeg|3gp|amr|asf|rm|rmvb)$/i;
+
+export async function preparePack(file: File, onProgress: (p: number) => void): Promise<{ xml: string; files: SharedFile[]; unplayable: Record<string, number> }> {
   if (file.size > MAX_PACK_MB * 1048576) throw new ShareError("tooBig");
   // The unzipper and the XML parser are needed only by the leader: loaded on demand.
   const { openPack } = await import("@kvz/siq");
@@ -129,7 +132,12 @@ export async function preparePack(file: File, onProgress: (p: number) => void): 
       files.push({ path: f.path, size: whole.length, hash, key: toB64(key), ...(dur ? { dur } : {}) });
       onProgress((i + 1) / opened.files.length);
     }
-    return { xml: opened.xml, files };
+    const unplayable: Record<string, number> = {};
+    for (const f of files) {
+      const ext = DEAD_EXT.exec(f.path)?.[1].toUpperCase();
+      if (ext) unplayable[ext] = (unplayable[ext] ?? 0) + 1;
+    }
+    return { xml: opened.xml, files, unplayable };
   } finally {
     opened.close();
   }
@@ -278,8 +286,9 @@ async function download(s: Swarm, f: number, from: string) {
     send({ t: "have", files: [f] });
     bump();
   } catch (e) {
-    if ((e as Error).message === "no") s.holders.get(from)?.delete(f);
-    else bad.set(from, Date.now() + BAD_MS);
+    const why = (e as Error).message;
+    if (why === "no") s.holders.get(from)?.delete(f);
+    else if (why !== "glare") bad.set(from, Date.now() + BAD_MS);
   } finally {
     downloading.delete(hash);
     schedule();
@@ -317,7 +326,8 @@ export async function onRtc(from: string, data: { sdp?: RTCSessionDescriptionIni
     // Both sides called at once: the one with the smaller id keeps its own offer.
     if (p && p.pc.signalingState === "have-local-offer") {
       if ((me() ?? "") < from) return;
-      p.close();
+      // Our own download waiting on it goes on over the connection they start.
+      p.close(new Error("glare"));
       p = undefined;
     }
     if (!p) { p = new Peer(from, false); peers.set(from, p); }

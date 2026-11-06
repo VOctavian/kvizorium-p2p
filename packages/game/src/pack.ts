@@ -36,6 +36,8 @@ const MIME: Record<string, string> = {
   png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", bmp: "image/bmp", svg: "image/svg+xml", avif: "image/avif",
   mp3: "audio/mpeg", ogg: "audio/ogg", oga: "audio/ogg", wav: "audio/wav", m4a: "audio/mp4", aac: "audio/aac", flac: "audio/flac", opus: "audio/ogg",
   mp4: "video/mp4", m4v: "video/mp4", webm: "video/webm", mov: "video/quicktime", ogv: "video/ogg", mkv: "video/x-matroska",
+  // Browsers don't play these; the type lets the player say so instead of showing a black box.
+  wmv: "video/x-ms-wmv", avi: "video/x-msvideo", flv: "video/x-flv", mpg: "video/mpeg", mpeg: "video/mpeg", "3gp": "video/3gpp", wma: "audio/x-ms-wma", amr: "audio/amr",
   html: "text/html", htm: "text/html",
 };
 const mimeOf = (path: string) => MIME[(/\.([A-Za-z0-9]+)$/.exec(path)?.[1] ?? "").toLowerCase()];

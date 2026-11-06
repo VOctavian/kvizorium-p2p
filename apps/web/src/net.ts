@@ -39,8 +39,10 @@ export function setPendingPack(p: { file?: File; demoId?: string } | null) { pen
 export async function sendPack(_roomId: string, file: File) {
   set({ upload: { name: file.name, progress: 0 } });
   try {
-    const { xml, files } = await preparePack(file, (progress) => set({ upload: { name: file.name, progress } }));
+    const { xml, files, unplayable } = await preparePack(file, (progress) => set({ upload: { name: file.name, progress } }));
     send({ t: "sharePack", xml, files });
+    const dead = Object.entries(unplayable);
+    if (dead.length) toast(tr().packUnplayable(dead.reduce((n, [, c]) => n + c, 0), dead.map(([e]) => e).join(", ")), "info");
   } catch (e) {
     const t = tr();
     toast(e instanceof ShareError ? (e.code === "tooBig" ? t.packTooBig : t.packTextTooBig) : `${t.packFailed}: ${(e as Error).message}`);

@@ -142,6 +142,8 @@ export const OFFLINE_GAME_MS = 120_000;
 
 /** Seconds to wait for slow browsers to load a question's media. */
 const LOAD_WAIT = 8;
+/** Video and sound are bigger and may still be on their way from the leader's browser: wait longer. */
+const CLIP_WAIT = 30;
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const pick = <T,>(a: T[]): T => a[Math.floor(Math.random() * a.length)];
 
@@ -825,7 +827,8 @@ export class Room {
     if (waitFor.length) {
       q.loading = new Set(waitFor);
       q.loadTotal = waitFor.length;
-      this.setTimer("load", LOAD_WAIT, "startReading");
+      const clip = q.data.content.some((it) => it.type === "audio" || it.type === "video");
+      this.setTimer("load", clip ? CLIP_WAIT : LOAD_WAIT, "startReading");
     } else this.startReading();
     this.changed();
   }

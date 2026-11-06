@@ -36,6 +36,7 @@ const ru = {
   otherDevice: "Вы зашли с другого устройства",
   needSiq: "Нужен файл пака с расширением .siq",
   packTooBig: "Пак больше 150 МБ — такие комнаты не принимают",
+  packUnplayable: (n: number, fmt: string) => `В паке файлов в формате ${fmt}: ${n}. Браузеры их не воспроизводят — вместо них будет надпись`,
   packTextTooBig: "В паке слишком много текста",
   dropSiq: "Перетащите файл .siq сюда или выберите на диске",
   kind: KIND_LABELS.ru as Record<QuestionKind, string>,
@@ -317,6 +318,7 @@ const ru = {
     host: "Ведущий:",
     html: "Открыть HTML-фрагмент",
     waiting: "Файл ещё передаётся…",
+    unsupported: (kind: "audio" | "video", fmt: string) => fmt ? `${kind === "video" ? "Видео" : "Звук"} в формате ${fmt}: браузеры его не воспроизводят` : `Браузер не смог воспроизвести ${kind === "video" ? "это видео" : "этот звук"}`,
     locked: "С паролем",
   },
 
@@ -662,6 +664,7 @@ const en: Dict = {
   otherDevice: "You signed in from another device",
   needSiq: "A pack file with the .siq extension is needed",
   packTooBig: "The pack is larger than 150 MB — rooms don't take those",
+  packUnplayable: (n: number, fmt: string) => `The pack has ${n} files in ${fmt} format. Browsers can't play them — a note shows in their place`,
   packTextTooBig: "The pack has too much text",
   dropSiq: "Drop a .siq file here or choose one on disk",
   kind: KIND_LABELS.en as Record<QuestionKind, string>,
@@ -943,6 +946,7 @@ const en: Dict = {
     host: "Host:",
     html: "Open the HTML fragment",
     waiting: "The file is still on its way…",
+    unsupported: (kind: "audio" | "video", fmt: string) => fmt ? `${kind === "video" ? "Video" : "Sound"} in ${fmt} format: browsers can't play it` : `The browser couldn't play this ${kind === "video" ? "video" : "sound"}`,
     locked: "Password",
   },
 

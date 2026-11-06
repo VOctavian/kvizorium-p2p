@@ -831,6 +831,7 @@ body { padding: 0; background: radial-gradient(120% 90% at 85% -10%, rgba(138,12
 [data-fx="low"] .q-body *, [data-fx="low"] .podium, [data-fx="low"] .q-card.enter { animation: none !important; transition: none !important; }
 
 /* ---------- shared packs ---------- */
+.media-wait.bad { color: var(--amber, #ffd27a); text-align: center; padding: 12px; }
 .media-wait { flex: 1 1 auto; display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 80px; color: var(--text-dim); font-weight: 600; font-size: 14px; }
 .share-box { margin-top: 12px; padding: 12px 14px; border-radius: 14px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); }
 .share-box .share-head { display: flex; justify-content: space-between; gap: 10px; font-weight: 700; font-size: 14px; }
