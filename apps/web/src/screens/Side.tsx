@@ -299,7 +299,24 @@ function InfoPanel({ room, canHost }: { room: RoomView; canHost: boolean }) {
       <div className="summary-tags">{settingsSummary(room.settings).map((s) => <span key={s} className="tag">{s}</span>)}</div>
       <SettingsForm value={room.settings} onChange={(s) => send({ t: "settings", settings: s })} disabled={!manage} autoHost={autoHost} inGame={room.phase !== "lobby"} sections={["type", "time", "rules"]} />
       {!manage && <p className="note">{t.game.hostChanges}</p>}
+      {manage && <CloseRoom />}
     </section>
+  );
+}
+
+/** Leader: close the room for everyone (asks first). */
+function CloseRoom() {
+  const t = useT();
+  const [sure, setSure] = useState(false);
+  if (!sure) return <button type="button" className="btn ghost danger close-room" onClick={() => setSure(true)}>{t.closing.close}</button>;
+  return (
+    <div className="close-room confirm">
+      <p className="note">{t.closing.closeConfirm}</p>
+      <div className="row">
+        <button type="button" className="btn sm danger" onClick={() => send({ t: "closeRoom" })}>{t.closing.closeYes}</button>
+        <button type="button" className="btn sm ghost" onClick={() => setSure(false)}>{t.cancel}</button>
+      </div>
+    </div>
   );
 }
 

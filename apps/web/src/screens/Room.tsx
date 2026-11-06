@@ -6,7 +6,7 @@ import { usePrefs } from "../prefs.ts";
 import { playSound } from "../sounds.ts";
 import { VolumeChip } from "./Side.tsx";
 import { useHotkey } from "../hotkeys.ts";
-import { avatarSrc, HOST_AVATAR, LinkBanner, LinkMark, PackName, ReactionLayer, toggleFullscreen, useDrainStyle } from "../ui.tsx";
+import { avatarSrc, ClosingBanner, HOST_AVATAR, LinkBanner, LinkMark, PackName, ReactionLayer, toggleFullscreen, useDrainStyle } from "../ui.tsx";
 
 /** Anyone's name in the room (for a reaction from someone who just left, nothing). */
 const nameIn = (room: RoomView, id: string) => (room.host?.id === id ? room.host : room.players.find((p) => p.id === id) ?? room.viewers.find((v) => v.id === id))?.name;
@@ -27,6 +27,7 @@ export function RoomScreen({ onProfile }: { onProfile: (p: Profile) => void }) {
       <div className="main">
         <Hud room={room} manage={manage} />
         <LinkBanner />
+        <ClosingBanner closing={room.closing} />
         <ReactionLayer names={(id) => nameIn(room, id)} />
         <div className="area">
           <Center room={room} />

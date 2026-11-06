@@ -19,7 +19,7 @@ import { createEvent, joinRoom, subscribe as nostrSubscribe } from "trystero";
 import { buildSharedPack, errorMsg, handleRoomMsg, Room, type Hub, type LoadedPack, type PackHooks, type RoomSnapshot, type User } from "@kvz/game";
 import { gotPicture, onMissingPicture, smallPicture } from "./share.ts";
 import { ICE, loadTurn } from "./ice.ts";
-import { text, type ClientMsg, type Gender, type RoomSummary, type ServerMsg, type SharedFile, type Text } from "@kvz/protocol";
+import { formatText, roomNameKey, text, type ClientMsg, type Gender, type RoomSummary, type ServerMsg, type SharedFile, type Text } from "@kvz/protocol";
 
 type Mesh = ReturnType<typeof joinRoom>;
 type Json = never;
@@ -695,6 +695,7 @@ function hubFor(g: Game): Hub {
     user: (id) => g.users.get(id),
     // Not after the room is gone: a late announcement would put a deleted room back on the list.
     roomsChanged: () => { if (!soon) soon = setTimeout(() => { soon = undefined; if (game === g && g.room) announce(g); }, 1000); },
+    closeRoom: (room, why) => { if (game === g && g.room === room) shutRoom(g, why); },
   };
 }
 
@@ -765,7 +766,14 @@ function tick(g: Game) {
     if (now - lastAnnounce > ANNOUNCE_MS) { lastAnnounce = now; announce(g); }
     if (now - lastSave > 5000) { lastSave = now; void saveCopy(g); }
     // Reports about who is connected go stale without a word: look again now and then.
-    if (now - g.sweptAt > 2000) { g.sweptAt = now; refreshOnline(g); g.room.sweepOffline(now); }
+    if (now - g.sweptAt > 2000) {
+      g.sweptAt = now;
+      refreshOnline(g);
+      g.room.sweepOffline(now);
+      // Its time may be up (a lobby nobody starts, a game nobody plays, the results): then it closes.
+      g.room.lifecycle(now);
+      if (game !== g) return;
+    }
     setLink("ok");
     return;
   }
@@ -863,6 +871,8 @@ function fromKeeper(g: Game, m: ServerMsg) {
     return;
   }
   if (m.t === "left") {
+    // The room is gone (closed, or this person was removed): its copy here mustn't bring it back.
+    void dropCopy(g.code);
     deliver(m);
     closeGame(g);
     showRooms();
@@ -977,7 +987,29 @@ function makeCode(): string {
   }
 }
 
+/** The room closes for everyone: they're told why and go back to the games list; it leaves the list and the disks. */
+function shutRoom(g: Game, why: Text) {
+  const room = g.room;
+  if (!room) return;
+  const msg: ServerMsg = { t: "left", reason: formatText("ru", why), text: why };
+  for (const id of room.members) if (id !== me.id) post(g, id, "s2c", msg);
+  announce(g, true);
+  void dropCopy(g.code);
+  localStorage.removeItem("kvz.p2p.current");
+  game = undefined;
+  deliver(msg);
+  showRooms();
+  // Let the goodbyes go out first.
+  setTimeout(() => closeGame(g), 600);
+}
+
 function createGame(m: Extract<ClientMsg, { t: "createRoom" }>) {
+  // Room names are unique among the rooms on the list.
+  const name = roomNameKey(m.name.trim().slice(0, 40) || `Комната ${me.name}`);
+  if ([...listed.values()].some((e) => e.summary.id !== game?.code && roomNameKey(e.summary.name) === name)) {
+    deliver(errorMsg(text("err.nameTaken")));
+    return;
+  }
   if (game) leaveGame();
   const g = openGame(makeCode());
   g.term = 1;

@@ -56,6 +56,8 @@ export interface Hub {
   /** A game ended / an anonymous pack was shown: for the games page statistics. */
   gameEnded?(room: Room): void;
   packShown?(room: Room): void;
+  /** The room closes for everyone (see Room.lifecycle and Room.closeByLeader); `why` goes to its members. */
+  closeRoom?(room: Room, why: Text): void;
 }
 
 interface PlayerState { id: string; score: number; ready: boolean }
@@ -145,13 +147,26 @@ const SAVED_FIELDS = [
   "name", "password", "settings", "ownerId", "hostId", "players", "viewers", "members", "phase", "paused", "roundIdx",
   "played", "chooserId", "roundEndsAt", "stake", "secret", "final", "hostLine", "chat", "emptySince", "createdAt", "voiceUrl",
   "startedAt", "packAlias", "chatSeq", "banned", "finalsPlayed", "packRevealed", "statsEntry", "lobbySince", "stakeAllParticipants", "leaving",
-  "leaderPick",
+  "leaderPick", "lastActivity", "overSince",
 ] as const;
 /** Extra seconds on a countdown after a restart, so people have time to reconnect. */
 const RESTORE_GRACE = 5;
 /** A player offline this long gives up their seat (see sweepOffline). */
 export const OFFLINE_LOBBY_MS = 30_000;
 export const OFFLINE_GAME_MS = 120_000;
+/**
+ * How long a room lives on its own (see lifecycle): a lobby where the game doesn't start, a game where
+ * nobody does anything, the results after a game, a room with nobody at the table. A warning shows
+ * WARN_MS before (the lobby and a quiet game can be kept).
+ */
+export const LOBBY_MS = 15 * 60_000;
+export const IDLE_MS = 30 * 60_000;
+export const OVER_MS = 5 * 60_000;
+export const NO_SEATS_MS = 2 * 60_000;
+export const WARN_MS = 2 * 60_000;
+export type Lifetimes = { lobbyMs: number; idleMs: number; overMs: number; noSeatsMs: number };
+type Closing = { why: "lobby" | "idle" | "over" | "empty"; at: number };
+
 /** Reactions: at least REACT_GAP apart, at most REACT_MAX in REACT_WINDOW, per person. */
 const REACT_GAP = 600;
 const REACT_MAX = 5;
@@ -845,6 +860,7 @@ export class Room {
   private gameOver() {
     this.clearTimer();
     this.phase = "gameOver";
+    this.overSince = Date.now();
     this.q = this.stake = this.secret = undefined;
     const sorted = [...this.players].sort((a, b) => b.score - a.score);
     const top = sorted[0];
@@ -1473,6 +1489,76 @@ export class Room {
   isPackRevealed() { return this.packRevealed; }
   /** Since when the room waits in the lobby (closed if no game starts for too long). */
   lobbySince = Date.now();
+  /** The last thing anyone did (a move, an answer, a chat line): a game nobody plays closes. */
+  lastActivity = Date.now();
+  /** When the game ended (the room closes a while after the results). */
+  overSince = 0;
+  /** Since when nobody sits at the table, neither players nor a host. */
+  private seatsEmptySince = 0;
+  private lifetimes: Lifetimes = { lobbyMs: LOBBY_MS, idleMs: IDLE_MS, overMs: OVER_MS, noSeatsMs: NO_SEATS_MS };
+  /** The warning on screen now (so a new one is sent the moment it appears). */
+  private warned = "";
+  private closed = false;
+
+  /** Someone did something in the room. */
+  touch(now = Date.now()) { this.lastActivity = now; }
+
+  /** When and why the room is going to close on its own, the soonest reason; `shown`: warn about it now. */
+  closing(now = Date.now()): (Closing & { shown: boolean }) | undefined {
+    const L = this.lifetimes;
+    const all: (Closing & { shown: boolean })[] = [];
+    if (this.phase === "lobby") {
+      const at = this.lobbySince + L.lobbyMs;
+      all.push({ why: "lobby", at, shown: at - now <= WARN_MS });
+    } else if (this.phase === "gameOver") {
+      all.push({ why: "over", at: (this.overSince || now) + L.overMs, shown: true });
+    } else {
+      const at = this.lastActivity + L.idleMs + WARN_MS;
+      all.push({ why: "idle", at, shown: at - now <= WARN_MS });
+    }
+    if (this.seatsEmptySince) all.push({ why: "empty", at: this.seatsEmptySince + L.noSeatsMs, shown: true });
+    return all.sort((a, b) => a.at - b.at)[0];
+  }
+
+  /**
+   * Called every few seconds by whoever keeps the room: closes it when its time is up (through the
+   * hub), and sends the views again when a warning appears or goes. `limits` shortens the times (tests).
+   */
+  lifecycle(now = Date.now(), limits: Partial<Lifetimes> = {}) {
+    if (this.closed) return;
+    this.lifetimes = { ...this.lifetimes, ...limits };
+    const nobody = !this.players.length && !this.hostId;
+    if (nobody && !this.seatsEmptySince) this.seatsEmptySince = now;
+    if (!nobody) this.seatsEmptySince = 0;
+    const c = this.closing(now);
+    if (c && c.at <= now) {
+      this.closed = true;
+      const why = { lobby: "left.expiredLobby", idle: "left.idle", over: "left.over", empty: "left.noSeats" } as const;
+      this.hub.closeRoom?.(this, tx(why[c.why]));
+      return;
+    }
+    const key = c?.shown ? `${c.why}:${c.at}` : "";
+    if (key !== this.warned) { this.warned = key; this.changed(); }
+  }
+
+  /** Keep the room: the leader gives the lobby another while; anyone answers "we're here" in a quiet game. */
+  extend(by: string, now = Date.now()) {
+    if (this.phase === "lobby") {
+      if (!this.isLeader(by)) return tx("err.leaderOnly");
+      this.lobbySince = now;
+    } else this.touch(now);
+    this.changed();
+    return null;
+  }
+
+  /** The leader closes the room for everyone. */
+  closeByLeader(by: string) {
+    if (!this.isLeader(by)) return tx("err.leaderOnly");
+    if (this.closed) return null;
+    this.closed = true;
+    this.hub.closeRoom?.(this, tx("left.closedByLeader"));
+    return null;
+  }
 
   private finalTurnId() { const f = this.final!; return f.order[f.turn % f.order.length]; }
 
@@ -1659,7 +1745,7 @@ export class Room {
   backToLobby() {
     this.clearTimer();
     this.startedAt = undefined;
-    this.lobbySince = Date.now();
+    this.lobbySince = this.lastActivity = Date.now();
     this.phase = "lobby";
     this.q = this.stake = this.secret = this.final = undefined;
     this.hostLine = tx("host.newGame");
@@ -1927,6 +2013,11 @@ export class Room {
       voiceUrl: this.voiceUrl,
       share: this.shareView(),
       serverNow: Date.now(),
+      closing: (() => {
+        const c = this.closing();
+        if (!c?.shown) return undefined;
+        return { why: c.why, at: c.at, canExtend: c.why === "idle" || (c.why === "lobby" && this.isLeader(me)) };
+      })(),
     };
     if (r && this.phase !== "lobby" && this.phase !== "gameOver") {
       v.board = {

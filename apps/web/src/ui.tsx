@@ -627,6 +627,21 @@ export function AwayText({ p }: { p: PersonView }) {
   return <span title={left != null ? t.link.awayTitle(mmss(left)) : undefined}>{t.offline}{left != null ? ` · ${left > 0 ? mmss(left) : t.link.leaving}` : ""}</span>;
 }
 
+/** The room is about to close on its own: why, the countdown, and how to keep it. */
+export function ClosingBanner({ closing }: { closing?: { why: "lobby" | "idle" | "over" | "empty"; at: number; canExtend: boolean } }) {
+  const t = useT();
+  const now = useNow(1000);
+  if (!closing) return null;
+  const left = mmss(closing.at - now);
+  const C = t.closing;
+  return (
+    <div className={`closing-banner ${closing.why}`} role="status">
+      <span>{C[closing.why](left)}</span>
+      {closing.canExtend && <button type="button" className="btn sm" onClick={() => send({ t: "extendRoom" })}>{closing.why === "lobby" ? C.extendLobby : C.here}</button>}
+    </div>
+  );
+}
+
 /** This browser's own way to its room, when it isn't the usual one. */
 export function LinkBanner() {
   const link = useStore((s) => s.link);

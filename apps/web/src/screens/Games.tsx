@@ -1,6 +1,6 @@
 import { useT, type T } from "../i18n.ts";
 import { useMemo, useState } from "react";
-import { type RoomSummary, type Settings } from "@kvz/protocol";
+import { roomNameKey, type RoomSummary, type Settings } from "@kvz/protocol";
 import { deletePreset, loadLastChoice, loadPresets, saveLastChoice, savePreset, type Preset } from "../createPrefs.ts";
 import { abs, send, setPendingPack, useStore } from "../net.ts";
 import { SettingsForm, settingsSummary, Stepper } from "../settings.tsx";
@@ -161,6 +161,7 @@ function roomTime(r: RoomSummary, now: number, t: T) {
 function CreateRoom({ onClose }: { onClose: () => void }) {
   const me = useStore((s) => s.me);
   const t = useT();
+  const rooms = useStore((s) => s.rooms);
   const [name, setName] = useState(me ? t.create.defaultName(me.name) : "");
   const [password, setPassword] = useState("");
   const [first] = useState(loadLastChoice);
@@ -175,6 +176,10 @@ function CreateRoom({ onClose }: { onClose: () => void }) {
   const patch = (p: Partial<Settings>) => setSettings((s) => ({ ...s, ...p }));
   const applyPreset = (p: Preset) => { setSettings(p.settings); setAsHost(p.asHost); };
   const samePreset = (p: Preset) => p.asHost === asHost && JSON.stringify(p.settings) === JSON.stringify(settings);
+  // Room names are unique: the dialog says so before the room is made and offers a free one.
+  const taken = new Set(rooms.map((r) => roomNameKey(r.name)));
+  const nameTaken = !!name.trim() && taken.has(roomNameKey(name));
+  const freeName = () => { const base = name.trim().replace(/\s+/g, " ").replace(/ \d+$/, ""); for (let i = 2; ; i++) if (!taken.has(roomNameKey(`${base} ${i}`))) return `${base} ${i}`.slice(0, 40); };
   const pickFile = (f?: File) => {
     if (!f) return;
     if (!/\.(siq|zip)$/i.test(f.name)) return setErr(t.needSiq);
@@ -187,6 +192,7 @@ function CreateRoom({ onClose }: { onClose: () => void }) {
       <form style={{ display: "grid", gap: 16 }} onSubmit={(e) => {
         e.preventDefault();
         if (!name.trim()) return setErr(t.create.needName);
+        if (nameTaken) return setErr(t.create.nameTaken);
         setPendingPack(pack ? { file: pack.file, demoId: pack.demoId } : null);
         saveLastChoice({ settings, asHost });
         send({ t: "createRoom", name, password: password || undefined, asHost, settings });
@@ -218,7 +224,9 @@ function CreateRoom({ onClose }: { onClose: () => void }) {
           {!presets.length && presetName == null && <span className="note">{t.create.noPresets}</span>}
         </div>
 
-        <label className="field"><span>{t.create.roomName}</span><input className="input" id="room-name" value={name} maxLength={40} onChange={(e) => { setName(e.target.value); setErr(""); }} /></label>
+        <label className="field"><span>{t.create.roomName}</span><input className="input" id="room-name" value={name} maxLength={40} aria-invalid={nameTaken} onChange={(e) => { setName(e.target.value); setErr(""); }} />
+          {nameTaken && <span className="name-taken">{t.create.nameTaken} · <button type="button" className="link-btn" onClick={() => { setName(freeName()); setErr(""); }}>{t.create.useName(freeName())}</button></span>}
+        </label>
 
         <div className="field"><span>{t.create.pack}</span>
           <div className="pack-pick">

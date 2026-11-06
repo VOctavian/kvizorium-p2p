@@ -123,6 +123,9 @@ export interface PersonView {
   goneAt?: number;
 }
 
+/** Room names are unique: compared without case, «ё» and extra spaces. */
+export const roomNameKey = (name: string) => name.trim().toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ");
+
 /** Emoji anyone in a room can send flying over the screen. */
 export const REACTIONS = ["👏", "😂", "😱", "🔥", "🤔", "😭"] as const;
 
@@ -325,6 +328,11 @@ export interface RoomView {
   secret?: SecretView;
   final?: FinalView;
   timer?: TimerView;
+  /**
+   * The room is about to close on its own (server clock `at`): a lobby where the game didn't start, a
+   * game where nothing happens, the results after a game, nobody at the table.
+   */
+  closing?: { why: "lobby" | "idle" | "over" | "empty"; at: number; canExtend: boolean };
   /** What the host says now (a message key the client renders in its language). */
   hostLine: Text;
   /** Link to a voice chat (Discord, Zoom, Telegram…) set by the host; opens in a new tab. */
@@ -449,7 +457,11 @@ export type ClientMsg =
   /** Leader: hand the room to someone else here. */
   | { t: "setLeader"; id: string }
   /** One of REACTIONS. */
-  | { t: "react"; e: string };
+  | { t: "react"; e: string }
+  /** Keep the room open (the lobby: leader; a quiet game: anyone). */
+  | { t: "extendRoom" }
+  /** Leader: close the room for everyone. */
+  | { t: "closeRoom" };
 
 export type ServerMsg =
   | { t: "welcome"; you: { id: string; name: string; avatar?: string }; demoPacks: { id: string; name: string }[] }

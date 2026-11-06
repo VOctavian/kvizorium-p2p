@@ -16,8 +16,12 @@ export interface PackHooks {
  * A message about the game in a room. The same code runs on the server and in a browser that keeps
  * a room for the others. Returns false for messages that aren't about the room.
  */
+/** Messages that are just the browsers' own business: they don't count as anyone doing anything. */
+const QUIET = new Set<ClientMsg["t"]>(["have", "rtc", "mediaReady", "preloaded", "hello", "profile", "listRooms", "joinRoom", "leaveRoom"]);
+
 export function handleRoomMsg(room: Room, user: User, msg: ClientMsg, hooks: PackHooks): boolean {
   const err = (e: Text | string | null | undefined | void) => { if (e) user.send(errorMsg(e)); };
+  if (!QUIET.has(msg.t)) room.touch();
   switch (msg.t) {
     case "chat": room.say(user, msg.text); return true;
     case "ready": room.setReady(user.id, msg.value); return true;
@@ -73,6 +77,8 @@ export function handleRoomMsg(room: Room, user: User, msg: ClientMsg, hooks: Pac
     case "fixScore": err(room.fixScore(user.id, msg.chatId, msg.mult)); return true;
     case "setLeader": err(room.setLeader(user.id, msg.id)); return true;
     case "react": room.react(user.id, msg.e); return true;
+    case "extendRoom": err(room.extend(user.id)); return true;
+    case "closeRoom": err(room.closeByLeader(user.id)); return true;
   }
   return false;
 }

@@ -946,3 +946,16 @@ body { padding: 0; background: radial-gradient(120% 90% at 85% -10%, rgba(138,12
 .chat .chat-head h2 { white-space: nowrap; }
 .chat-tools { flex: 1 1 auto; justify-content: flex-end; }
 .chat .chat-tools .seg { flex-wrap: nowrap; }
+
+/* ---------- room closing ---------- */
+.closing-banner { display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; padding: 8px 14px; border-radius: 14px; font-size: 14px; font-weight: 600; text-align: center; margin-top: -6px; background: rgba(255,210,122,.12); border: 1px solid rgba(255,210,122,.45); color: #ffe7b8; }
+.closing-banner.over { background: rgba(67,240,196,.1); border-color: rgba(67,240,196,.4); color: #c9fff0; }
+.closing-banner span { font-variant-numeric: tabular-nums; }
+.btn.danger { color: var(--bad); border-color: rgba(255,90,110,.45); }
+.btn.sm.danger:not(.ghost) { background: rgba(255,90,110,.18); color: #ffd0d7; }
+.close-room { margin-top: 14px; width: 100%; }
+.close-room.confirm { display: grid; gap: 8px; padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(255,90,110,.45); background: rgba(255,90,110,.08); }
+.close-room.confirm .note { margin: 0; }
+.name-taken { display: block; margin-top: 6px; font-size: 13px; color: #ffb3bf; }
+.link-btn { background: none; border: 0; padding: 0; color: var(--mint); font: inherit; text-decoration: underline; cursor: pointer; }
+.input[aria-invalid="true"] { border-color: rgba(255,90,110,.6); }

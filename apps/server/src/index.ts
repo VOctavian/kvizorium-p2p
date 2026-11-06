@@ -7,8 +7,8 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import { WebSocketServer, type WebSocket } from "ws";
-import { formatText, text, type ClientMsg, type RoomSummary, type ServerMsg, type SharedFile, type Text } from "@kvz/protocol";
-import { errorMsg, handleRoomMsg, Room, type PackHooks, type RoomSnapshot, type User } from "@kvz/game";
+import { formatText, roomNameKey, text, type ClientMsg, type RoomSummary, type ServerMsg, type SharedFile, type Text } from "@kvz/protocol";
+import { errorMsg, handleRoomMsg, LOBBY_MS, Room, type PackHooks, type RoomSnapshot, type User } from "@kvz/game";
 import { hiddenMediaFile, diskPathFor, forgetPack, loadPack, loadSharedPack, type LoadedPack } from "./packs.ts";
 
 export interface ServerOptions {
@@ -134,6 +134,9 @@ export async function startServer(opts: ServerOptions = {}) {
       if (r.statsEntry && r.pack) stats.reveal(r.statsEntry, r.pack.info.name, r.pack.info.questions);
       sendStats();
     },
+    closeRoom(r: Room, why: Text) {
+      if (rooms.get(r.id) === r) closeRoom(r.id, r, formatText("ru", why), why);
+    },
     roomsChanged() {
       if (roomsTimer) return;
       roomsTimer = setTimeout(() => {
@@ -192,9 +195,10 @@ export async function startServer(opts: ServerOptions = {}) {
         user.send({ t: "stats", stats: stats.view() });
         return user.send({ t: "rooms", rooms: summaries() });
       case "createRoom": {
-        room?.leave(user);
         const id = makeCode();
         const r = new Room(id, hub, user, msg);
+        if ([...rooms.values()].some((x) => roomNameKey(x.name) === roomNameKey(r.name))) { r.dispose(); return err(text("err.nameTaken")); }
+        room?.leave(user);
         rooms.set(id, r);
         log(`комната ${id} «${r.name}» от ${user.name}`);
         return err(r.join(user, msg.password, !!r.hostId));
@@ -422,8 +426,8 @@ export async function startServer(opts: ServerOptions = {}) {
   });
 
   /* ---- cleanup of empty rooms ---- */
-  // Rooms close when empty for 5 minutes, or when no game starts within 20 minutes.
-  const limits = { emptyMs: 5 * 60_000, lobbyMs: 20 * 60_000, sweepMs: 10_000, ...opts.roomLimits };
+  // Rooms close when empty for 5 minutes; the rest of their lifetime is the room's own (Room.lifecycle).
+  const limits = { emptyMs: 5 * 60_000, lobbyMs: LOBBY_MS, sweepMs: 5_000, ...opts.roomLimits };
   const closeRoom = (id: string, r: Room, why: string, reason?: Text) => {
     r.dispose();
     rooms.delete(id);
@@ -442,7 +446,8 @@ export async function startServer(opts: ServerOptions = {}) {
     const now = Date.now();
     for (const [id, r] of rooms) {
       r.sweepOffline(now);
-      if (r.phase === "lobby" && now - r.lobbySince > limits.lobbyMs) { closeRoom(id, r, "игру не начали", text("left.expiredLobby")); continue; }
+      r.lifecycle(now, { lobbyMs: limits.lobbyMs });
+      if (rooms.get(id) !== r) continue;
       if (r.onlineMembers().length) { r.emptySince = 0; continue; }
       if (!r.emptySince) r.emptySince = now;
       else if (now - r.emptySince > limits.emptyMs) closeRoom(id, r, "пустая");

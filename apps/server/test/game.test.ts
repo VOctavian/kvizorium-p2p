@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import WebSocket from "ws";
 import { formatText, type ChatItem, type ClientMsg, type RoomSummary, type RoomView, type ServerMsg } from "@kvz/protocol";
 import { startServer } from "../src/index.ts";
-import { OFFLINE_GAME_MS, OFFLINE_LOBBY_MS, Room } from "@kvz/game";
+import { IDLE_MS, LOBBY_MS, NO_SEATS_MS, OFFLINE_GAME_MS, OFFLINE_LOBBY_MS, OVER_MS, Room, WARN_MS } from "@kvz/game";
 
 let srv: Awaited<ReturnType<typeof startServer>>;
 before(async () => {
@@ -745,7 +745,7 @@ test("finals: «only the first» ends the game after one final, «all» plays th
     const h = new Client(`ВедущийФ-${finals}`);
     const a = new Client(`ИгрокФ-${finals}`);
     await h.open(); await a.open();
-    h.send({ t: "createRoom", name: "Финалы", settings: { chooseTime: 0, finals }, asHost: true });
+    h.send({ t: "createRoom", name: `Финалы ${finals}`, settings: { chooseTime: 0, finals }, asHost: true });
     const r0 = await h.until((r) => !!r.id);
     a.send({ t: "joinRoom", roomId: r0.id });
     await h.until((r) => r.players.length === 1);
@@ -1318,4 +1318,85 @@ test("the last one to leave with the button deletes the room at once", async () 
   h.send({ t: "joinRoom", roomId: r0.id });
   assert.ok(await h.error(h.errors.length), "the code leads nowhere now");
   h.close(); w.close();
+});
+
+test("rooms close on their own: a lobby nobody starts, a quiet game, the results, nobody at the table; the leader can close", () => {
+  const users = new Map<string, { id: string; name: string; online: boolean; send: () => void; lastChat: number; token: string; roomId?: string }>();
+  const mk = (id: string) => { const u = { id, name: id, online: true, send: () => {}, lastChat: 0, token: "" }; users.set(id, u); return u; };
+  const closed: string[] = [];
+  const hub = { user: (id: string) => users.get(id), roomsChanged: () => {}, closeRoom: (_r: Room, why: { key: string }) => { closed.push(why.key); } };
+  const o = mk("o"), p = mk("p"), v = mk("v");
+  const fresh = (name: string) => { const r = new Room(name, hub, o, { name, settings: {}, asHost: false }); r.join(o); r.join(p); r.join(v, undefined, true); return r; };
+  const now = Date.now();
+
+  // The lobby: a warning 2 minutes before 15; the leader (only) gives it another 15.
+  const lobby = fresh("LOBB");
+  lobby.lifecycle(now);
+  assert.equal(lobby.view("o").closing, undefined, "no warning yet");
+  lobby.lobbySince = now - LOBBY_MS + 60_000;
+  lobby.lifecycle(now);
+  assert.equal(lobby.view("o").closing?.why, "lobby");
+  assert.equal(lobby.view("o").closing?.canExtend, true);
+  assert.equal(lobby.view("p").closing?.canExtend, false, "only the leader extends a lobby");
+  assert.ok(lobby.extend("p"));
+  assert.equal(lobby.extend("o", now), null);
+  lobby.lifecycle(now + 61_000);
+  assert.deepEqual(closed, [], "extended: still open");
+  lobby.lifecycle(now + LOBBY_MS + 1);
+  assert.deepEqual(closed, ["left.expiredLobby"]);
+  lobby.dispose();
+
+  // A game where nobody does anything: a warning after 30 minutes, closed 2 minutes later; anyone can keep it.
+  const quiet = fresh("QUIE");
+  quiet.phase = "choosing";
+  quiet.lastActivity = now - IDLE_MS - 30_000;
+  quiet.lifecycle(now);
+  assert.equal(quiet.view("v").closing?.why, "idle");
+  assert.equal(quiet.view("v").closing?.canExtend, true);
+  quiet.extend("v", now);
+  assert.equal(quiet.view("v").closing, undefined, "«we're here» takes the warning away");
+  quiet.lifecycle(now + IDLE_MS + WARN_MS + 1);
+  assert.deepEqual(closed.slice(1), ["left.idle"]);
+  quiet.dispose();
+
+  // The results: everyone back to the list 5 minutes after.
+  const over = fresh("OVER");
+  over.phase = "gameOver";
+  over.overSince = now;
+  over.lifecycle(now);
+  assert.equal(over.view("o").closing?.why, "over");
+  over.lifecycle(now + OVER_MS + 1);
+  assert.deepEqual(closed.slice(2), ["left.over"]);
+  over.dispose();
+
+  // Only viewers left: closed after 2 minutes.
+  const empty = fresh("EMPT");
+  empty.leave(o);
+  empty.leave(p);
+  empty.lifecycle(now);
+  assert.equal(empty.view("v").closing?.why, "empty");
+  empty.lifecycle(now + NO_SEATS_MS + 1);
+  assert.deepEqual(closed.slice(3), ["left.noSeats"]);
+  empty.dispose();
+
+  // The leader closes it at once; nobody else can.
+  const byLeader = fresh("LEAD");
+  assert.ok(byLeader.closeByLeader("p"));
+  assert.equal(byLeader.closeByLeader("o"), null);
+  assert.deepEqual(closed.slice(4), ["left.closedByLeader"]);
+  byLeader.dispose();
+});
+
+test("room names don't repeat", async () => {
+  const a = new Client("Имя А");
+  const b = new Client("Имя Б");
+  await a.open(); await b.open();
+  a.send({ t: "createRoom", name: "Ёлка у Димы", settings: {}, asHost: true });
+  await a.until((r) => r.name === "Ёлка у Димы");
+  b.send({ t: "createRoom", name: "  елка у  ДИМЫ ", settings: {}, asHost: true });
+  assert.match(await b.error(0), /таким названием/);
+  assert.equal(b.room, undefined, "no room made");
+  b.send({ t: "createRoom", name: "Ёлка у Димы 2", settings: {}, asHost: true });
+  await b.until((r) => r.name === "Ёлка у Димы 2");
+  a.close(); b.close();
 });
