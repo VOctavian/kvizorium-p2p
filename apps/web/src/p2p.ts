@@ -17,6 +17,7 @@
  */
 import { createEvent, joinRoom, subscribe as nostrSubscribe } from "trystero";
 import { buildSharedPack, errorMsg, handleRoomMsg, Room, type Hub, type LoadedPack, type PackHooks, type RoomSnapshot, type User } from "@kvz/game";
+import { gotPicture, onMissingPicture, smallPicture } from "./share.ts";
 import { text, type ClientMsg, type Gender, type RoomSummary, type ServerMsg, type SharedFile, type Text } from "@kvz/protocol";
 
 type Mesh = ReturnType<typeof joinRoom>;
@@ -87,6 +88,7 @@ export function start(opts: {
   onDemoPack = opts.onDemoPack;
   onAvatars = opts.onAvatars;
   if (opts.onLink) onLink = opts.onLink;
+  onMissingPicture(wantPicture);
   if (opts.avatar) void setMyAvatar(opts.avatar);
   openBoard();
   void fetch("packs/index.json").then((r) => (r.ok ? r.json() : []), () => []).then((list: { id: string; name: string }[]) => {
@@ -299,7 +301,7 @@ interface PackData { hash: string; xml: string; files: SharedFile[] }
  * Everything in a room travels in envelopes addressed to a person (or to everyone): if two browsers
  * can't connect directly (strict NATs), the envelope goes through someone connected to both.
  */
-type Kind = "c2s" | "s2c" | "state" | "beat" | "pack" | "wantpack" | "wantstate" | "av" | "wantav" | "hi";
+type Kind = "c2s" | "s2c" | "state" | "beat" | "pack" | "wantpack" | "wantstate" | "av" | "wantav" | "hi" | "wantpic" | "pic";
 interface Envelope { i: string; f: string; t: string; k: Kind; d: unknown; h: number }
 /** Who each person is directly connected to (and their names), from their reports. */
 interface Reach { at: number; links: Map<string, { n: string; g?: Gender }> }
@@ -494,6 +496,48 @@ async function onFar(g: Game, content: string, eventId: string) {
   }
 }
 
+/**
+ * Pictures for someone on the spare route: they ask the keeper with the key the picture was shown
+ * with, the keeper sends it back decrypted, small (see smallPicture) and in parts.
+ */
+const PIC_PART = 20_000;
+const PIC_ASK_MS = 20_000;
+interface PicPart { h: string; i: number; n: number; m: string; d: string }
+const picAsked = new Map<string, number>();
+const picSending = new Map<string, number>();
+const picParts = new Map<string, { n: number; m: string; parts: string[]; got: number }>();
+
+function wantPicture(hash: string, key: string, mime: string) {
+  const g = game;
+  if (!g || g.room || !g.keeper || route(g, g.keeper) || !isFar(g, g.keeper)) return;
+  if (Date.now() - (picAsked.get(hash) ?? 0) < PIC_ASK_MS) return;
+  picAsked.set(hash, Date.now());
+  post(g, g.keeper, "wantpic", { h: hash, k: key, m: mime });
+}
+
+async function sendPicture(g: Game, to: string, d: { h?: unknown; k?: unknown; m?: unknown }) {
+  if (typeof d?.h !== "string" || !/^[0-9a-f]{64}$/.test(d.h) || typeof d.k !== "string" || typeof d.m !== "string") return;
+  const id = `${to}:${d.h}`;
+  if (Date.now() - (picSending.get(id) ?? 0) < PIC_ASK_MS / 2) return;
+  picSending.set(id, Date.now());
+  const pic = await smallPicture(d.h, d.k, d.m);
+  if (!pic || game !== g) return;
+  const all = b64(pic.data.buffer as ArrayBuffer);
+  const n = Math.ceil(all.length / PIC_PART);
+  for (let i = 0; i < n; i++) post(g, to, "pic", { h: d.h, i, n, m: pic.mime, d: all.slice(i * PIC_PART, (i + 1) * PIC_PART) } satisfies PicPart);
+}
+
+function onPicturePart(d: PicPart) {
+  if (typeof d?.h !== "string" || typeof d.d !== "string" || typeof d.m !== "string" || !/^image\//.test(d.m)) return;
+  if (!Number.isInteger(d.i) || !Number.isInteger(d.n) || d.n < 1 || d.n > 60 || d.i < 0 || d.i >= d.n) return;
+  let e = picParts.get(d.h);
+  if (!e || e.n !== d.n) picParts.set(d.h, (e = { n: d.n, m: d.m, parts: [], got: 0 }));
+  if (e.parts[d.i] === undefined) { e.parts[d.i] = d.d; e.got++; }
+  if (e.got < e.n) return;
+  picParts.delete(d.h);
+  try { gotPicture(d.h, Uint8Array.from(atob(e.parts.join("")), (c) => c.charCodeAt(0)), e.m); } catch { /* broken on the way */ }
+}
+
 /** No way to the keeper through browsers: "hi" through the relays (it answers the same way). */
 function sayHiFar(g: Game) {
   g.hiAt = Date.now();
@@ -553,6 +597,8 @@ function dispatch(g: Game, from: string, k: Kind, d: unknown) {
     case "wantpack": if (g.pack && g.pack.hash === (d as { hash: string })?.hash) post(g, from, "pack", g.pack); return;
     case "wantstate": if (g.room) sendState(g, from); return;
     case "av": return onAvatar(g, from, d as { u: string; v: string; d: string });
+    case "wantpic": return void sendPicture(g, from, d as { h?: unknown; k?: unknown; m?: unknown });
+    case "pic": if (from === g.keeper) onPicturePart(d as PicPart); return;
     case "hi": {
       const h = d as { n?: unknown; g?: Gender; a?: unknown };
       g.farNames.set(from, { n: String(h?.n ?? "Игрок").slice(0, 24), g: h?.g === "m" || h?.g === "f" ? h.g : undefined });

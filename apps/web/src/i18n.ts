@@ -26,12 +26,12 @@ const ru = {
   link: {
     direct: "Прямая связь",
     relay: "Связь через другого игрока",
-    far: "Запасной канал через серверы Nostr: медленнее, без картинок, видео и звука",
+    far: "Запасной канал через серверы Nostr: медленнее, картинки уменьшены, без видео и звука",
     awayTitle: (left: string) => `Нет связи. Уйдёт из комнаты через ${left}, если не вернётся`,
     reconnecting: "Нет связи, ждём возвращения",
     leaving: "уходит",
     lost: "Нет связи с комнатой — переподключаемся…",
-    farMe: "Вы на запасном канале: связь медленнее, картинки, видео и звук не загрузятся",
+    farMe: "Вы на запасном канале: связь медленнее, картинки приходят уменьшенными, видео и звук не загрузятся",
   },
   react: {
     title: "Реакции",
@@ -685,12 +685,12 @@ const en: Dict = {
   link: {
     direct: "Direct connection",
     relay: "Connected through another player",
-    far: "Spare route through Nostr relays: slower, no pictures, video or sound",
+    far: "Spare route through Nostr relays: slower, smaller pictures, no video or sound",
     awayTitle: (left) => `Offline. Leaves the room in ${left} unless back`,
     reconnecting: "Offline, waiting for them",
     leaving: "leaving",
     lost: "Lost the room — reconnecting…",
-    farMe: "You're on the spare route: slower, pictures, video and sound won't load",
+    farMe: "You're on the spare route: slower, pictures come smaller, video and sound won't load",
   },
   react: {
     title: "Reactions",

@@ -221,7 +221,12 @@ export function mediaUrl(file: number, key: string, mime?: string): Promise<stri
   if (!p) {
     p = (async () => {
       const blob = await getBlob(hash);
-      if (!blob) { urgent.add(file); schedule(); return undefined; }
+      if (!blob) {
+        urgent.add(file);
+        schedule();
+        if (mime?.startsWith("image/")) onMissing?.(hash, key, mime);
+        return undefined;
+      }
       try {
         const whole = new Uint8Array(await blob.arrayBuffer());
         const ck = await crypto.subtle.importKey("raw", fromB64(key), "AES-GCM", false, ["decrypt"]);
@@ -236,6 +241,53 @@ export function mediaUrl(file: number, key: string, mime?: string): Promise<stri
     decrypting.set(hash, p);
   }
   return p;
+}
+
+/* ---------- pictures over the spare route ---------- */
+
+/**
+ * Someone on the spare route (no direct connections) gets no files the usual way. A picture on
+ * screen is asked for over the relays instead, with the key it was shown with; a browser that has
+ * the file sends it back decrypted and small.
+ */
+let onMissing: ((hash: string, key: string, mime: string) => void) | undefined;
+export function onMissingPicture(f: (hash: string, key: string, mime: string) => void) { onMissing = f; }
+
+/** Longest side of a picture sent over the relays. */
+const SMALL_SIDE = 800;
+const SMALL_SVG = 150_000;
+
+/** A picture this browser holds, decrypted and made small (webp, at most 800 px). */
+export async function smallPicture(hash: string, key: string, mime: string): Promise<{ data: Uint8Array; mime: string } | undefined> {
+  if (!mime.startsWith("image/")) return undefined;
+  const blob = await getBlob(hash);
+  if (!blob) return undefined;
+  let plain: ArrayBuffer;
+  try {
+    const whole = new Uint8Array(await blob.arrayBuffer());
+    const ck = await crypto.subtle.importKey("raw", fromB64(key), "AES-GCM", false, ["decrypt"]);
+    plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: whole.subarray(0, 12) }, ck, whole.subarray(12));
+  } catch { return undefined; }
+  // A drawing is text and zips well: as it is, if it's not huge.
+  if (mime === "image/svg+xml") return plain.byteLength <= SMALL_SVG ? { data: new Uint8Array(plain), mime } : undefined;
+  let img: ImageBitmap;
+  try { img = await createImageBitmap(new Blob([plain], { type: mime })); } catch { return undefined; }
+  const k = Math.min(1, SMALL_SIDE / Math.max(img.width, img.height));
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(img.width * k));
+  c.height = Math.max(1, Math.round(img.height * k));
+  c.getContext("2d")!.drawImage(img, 0, 0, c.width, c.height);
+  img.close();
+  const out = await new Promise<Blob | null>((ok) => c.toBlob(ok, "image/webp", 0.72));
+  if (!out) return undefined;
+  return { data: new Uint8Array(await out.arrayBuffer()), mime: out.type || "image/png" };
+}
+
+/** A picture that came over the relays: shown like any other. */
+export function gotPicture(hash: string, data: Uint8Array, mime: string) {
+  if (urls.has(hash)) return;
+  urls.set(hash, URL.createObjectURL(new Blob([data as BlobPart], { type: mime })));
+  bump();
 }
 
 /** Waits up to `ms` for a file to arrive and decrypt. */
