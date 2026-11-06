@@ -127,6 +127,7 @@ export function SettingsForm({ value, onChange, disabled, autoHost, inGame, sect
 }
 
 /** Short tags for the settings, in the current language (callers re-render through useT). */
-export function settingsSummary(s: Settings): string[] {
-  return tr().summary(s);
+/** `short`: without the timings and the reading speed (the lobby shows those in the settings). */
+export function settingsSummary(s: Settings, short = false): string[] {
+  return tr().summary(s, short);
 }

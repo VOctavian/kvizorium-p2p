@@ -5,6 +5,7 @@ import { rename, writeFile, rm } from "node:fs/promises";
 import { extname, join, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { Readable } from "node:stream";
 import { WebSocketServer, type WebSocket } from "ws";
 import { formatText, text, type ClientMsg, type RoomSummary, type ServerMsg, type SharedFile, type Text } from "@kvz/protocol";
 import { errorMsg, handleRoomMsg, Room, type PackHooks, type RoomSnapshot, type User } from "@kvz/game";
@@ -256,9 +257,39 @@ export async function startServer(opts: ServerOptions = {}) {
   }
 
 
+  /**
+   * The SIBrowser pack library for the game's pack picker (see apps/web/src/sibrowser.ts): it can't
+   * be read from a browser directly, so its search pages and pack downloads come through here.
+   * Nothing else on that site, and nothing anywhere else.
+   */
+  const SIB_PATH = /^\/(packages(\/\d+\/direct_download)?|tags\/[^/]+|categories\/[a-z_]+|authors\/[^/]+)?$/;
+  async function sibProxy(path: string, search: string, res: ServerResponse) {
+    if (!SIB_PATH.test(path)) return send(res, 404, { error: "Не найдено" });
+    try {
+      const r = await fetch(`https://www.sibrowser.ru${path}${search}`, { headers: { "user-agent": "Kvizorium (pack search)" } });
+      const h: Record<string, string> = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Expose-Headers": "Content-Length",
+        "Content-Type": r.headers.get("content-type") ?? "application/octet-stream",
+        "Cache-Control": path.endsWith("direct_download") ? "no-store" : "public, max-age=120",
+      };
+      // fetch unzips pages: their length on the wire isn't the length here.
+      const len = r.headers.get("content-length");
+      if (len && !r.headers.get("content-encoding")) h["Content-Length"] = len;
+      res.writeHead(r.status, h);
+      if (!r.body) return res.end();
+      Readable.fromWeb(r.body as never).on("error", () => res.destroy()).pipe(res);
+    } catch {
+      if (!res.headersSent) send(res, 502, { error: "SIBrowser недоступен" });
+      else res.destroy();
+    }
+  }
+
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://x");
     const path = url.pathname;
+    const sib = /^\/sib(\/.*)?$/.exec(path);
+    if (sib && req.method === "GET") return void sibProxy(sib[1] || "/", url.search, res);
     if (req.method === "OPTIONS") {
       res.writeHead(204, { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "content-type, x-kvz-token", "Access-Control-Allow-Methods": "GET, POST" });
       return res.end();

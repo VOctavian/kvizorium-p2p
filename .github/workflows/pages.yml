@@ -30,6 +30,8 @@ jobs:
         env:
           # TURN servers (see apps/web/src/ice.ts): Settings → Secrets and variables → Actions → Variables.
           VITE_TURN: ${{ vars.VITE_TURN }}
+          # The SIBrowser library's proxy (deploy/sib-proxy.worker.js), e.g. https://NAME.workers.dev
+          VITE_SIB_PROXY: ${{ vars.VITE_SIB_PROXY }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: apps/web/dist

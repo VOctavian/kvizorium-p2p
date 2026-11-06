@@ -56,11 +56,15 @@ export default defineConfig(({ mode }) => ({
   base: "./",
   server: {
     port: 5173,
-    proxy: mode === "p2p" ? undefined : {
-      "/ws": { target, ws: true },
-      "/api": target,
-      "/media": target,
-      "/avatar": target,
+    proxy: {
+      // The SIBrowser library while developing (the built site uses the game server or a worker).
+      "/sib": { target: "https://www.sibrowser.ru", changeOrigin: true, followRedirects: true, rewrite: (p: string) => p.replace(/^\/sib/, "") || "/" },
+      ...(mode === "p2p" ? {} : {
+        "/ws": { target, ws: true },
+        "/api": target,
+        "/media": target,
+        "/avatar": target,
+      }),
     },
   },
   build: { outDir: "dist", emptyOutDir: true, chunkSizeWarningLimit: 900 },

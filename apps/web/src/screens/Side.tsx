@@ -77,6 +77,43 @@ function useUnread(open: boolean) {
 
 /* ---------- chat with game feed ---------- */
 
+/** The gear by the chat's filters: which kinds of lines to show at all (kept on this device). */
+function ChatOptions({ open, setOpen, hidden }: { open: boolean; setOpen: (v: boolean) => void; hidden: Set<string> }) {
+  const t = useT();
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: PointerEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    addEventListener("pointerdown", close);
+    addEventListener("keydown", esc);
+    return () => { removeEventListener("pointerdown", close); removeEventListener("keydown", esc); };
+  }, [open, setOpen]);
+  const toggle = (k: string, show: boolean) => {
+    const next = new Set(getPrefs().chatHide ?? []);
+    if (show) next.delete(k); else next.add(k);
+    setPrefs({ chatHide: [...next] });
+  };
+  return (
+    <div className="chat-opts-wrap" ref={ref}>
+      <button type="button" className={`chat-gear ${hidden.size ? "on" : ""}`} aria-expanded={open} aria-label={t.side.chatOptions} title={t.side.chatOptions} onClick={() => setOpen(!open)}>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1L15 3.3h-4l-.4 2.6a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1c.5.4 1.1.7 1.7 1l.4 2.6h4l.4-2.6c.6-.3 1.2-.6 1.7-1l2.5 1 2-3.5ZM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z" transform="translate(-1 0)" /></svg>
+      </button>
+      {open && (
+        <div className="chat-opts" role="dialog" aria-label={t.side.chatOptions}>
+          <p className="eyebrow">{t.side.chatOptions}</p>
+          {CHAT_KINDS.map((k) => (
+            <label key={k} className="check">
+              <input type="checkbox" checked={!hidden.has(k)} onChange={(e) => toggle(k, e.target.checked)} />
+              <span>{t.side.kinds[k]}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const MAX_SHOWN = 150;
 const time = (at: number, locale: string) => new Date(at).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
 
@@ -107,13 +144,36 @@ const ChatRow = memo(function ChatRow({ m, canFix }: { m: ChatItem; canFix: bool
   );
 });
 
+/** What a chat line is about, for the chat's settings (each kind can be hidden). */
+const CHAT_KINDS = ["players", "viewers", "host", "scores", "buzz", "picks", "stakes", "people", "other"] as const;
+type ChatKind = (typeof CHAT_KINDS)[number];
+/** A line about points: a judged answer, a stake won or lost, a corrected score. */
+const isScore = (m: ChatItem) => m.kind === "ev" && (!!m.fix || m.tone === "good" || m.tone === "bad" || (m.line?.params as { delta?: unknown } | undefined)?.delta != null);
+function kindOf(m: ChatItem): ChatKind {
+  if (m.kind === "msg") return m.role === "viewer" ? "viewers" : m.role === "host" ? "host" : "players";
+  if (isScore(m)) return "scores";
+  if (m.tone === "buzz") return "buzz";
+  if (m.tone === "pick") return "picks";
+  if (m.tone === "bid") return "stakes";
+  if (/^ev\.(join|left|kicked|hostLeft|hostTaken|swapped|newLeader)/.test(m.line?.key ?? "")) return "people";
+  return "other";
+}
+type ChatFilter = "all" | "msg" | "ev" | "score";
+
 const Chat = memo(function Chat({ viewers, canFix, voiceUrl }: { viewers: number; canFix: boolean; voiceUrl?: string }) {
   const items = useStore((s) => s.chat);
-  const [filter, setFilter] = useState<"all" | "msg" | "ev">("all");
+  const { chatHide } = usePrefs();
+  const [filter, setFilter] = useState<ChatFilter>("all");
   const [text, setText] = useState("");
+  const [opts, setOpts] = useState(false);
   const t = useT();
   const listRef = useRef<HTMLDivElement>(null);
-  const shown = (filter === "all" ? items : items.filter((m) => m.kind === filter)).slice(-MAX_SHOWN);
+  const hidden = new Set(chatHide ?? []);
+  const shown = items.filter((m) => {
+    if (hidden.has(kindOf(m))) return false;
+    if (filter === "score") return isScore(m);
+    return filter === "all" || m.kind === filter;
+  }).slice(-MAX_SHOWN);
   const lastId = shown.at(-1)?.id;
   useEffect(() => {
     const el = listRef.current;
@@ -124,10 +184,13 @@ const Chat = memo(function Chat({ viewers, canFix, voiceUrl }: { viewers: number
       {canFix ? <VoiceLink url={voiceUrl} /> : voiceUrl && <VoiceButton url={voiceUrl} />}
       <div className="chat-head">
         <h2>{t.side.chat} <span className="faint" style={{ fontSize: 12, fontFamily: "var(--font-body)" }}>· {t.side.viewers(viewers)}</span></h2>
-        <div className="seg">
-          {([["all", t.side.all], ["msg", t.side.chat], ["ev", t.side.feed]] as const).map(([v, l]) => (
-            <button key={v} aria-pressed={filter === v} onClick={() => setFilter(v)}>{l}</button>
-          ))}
+        <div className="chat-tools">
+          <div className="seg">
+            {([["all", t.side.all], ["msg", t.side.chat], ["ev", t.side.feed], ["score", t.side.answers]] as const).map(([v, l]) => (
+              <button key={v} aria-pressed={filter === v} onClick={() => setFilter(v)}>{l}</button>
+            ))}
+          </div>
+          <ChatOptions open={opts} setOpen={setOpts} hidden={hidden} />
         </div>
       </div>
       {canFix && <p className="note" style={{ margin: 0 }}>{t.side.fixHint}</p>}

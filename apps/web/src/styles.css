@@ -893,3 +893,56 @@ body { padding: 0; background: radial-gradient(120% 90% at 85% -10%, rgba(138,12
 .react-bar button { flex: 1; font-size: 20px; line-height: 1; padding: 6px 0; border-radius: 10px; border: 1px solid var(--line); background: var(--glass-2); cursor: pointer; transition: transform .12s; }
 .react-bar button:hover:not(:disabled) { transform: translateY(-2px) scale(1.08); }
 .react-bar button:disabled { opacity: .45; cursor: default; }
+
+/* ---------- chat settings ---------- */
+.chat-tools { display: flex; align-items: center; gap: 6px; }
+.chat-opts-wrap { position: relative; }
+.chat-gear { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; border: 1px solid var(--line); background: rgba(0,0,0,.25); color: var(--text-dim); cursor: pointer; }
+.chat-gear svg { width: 17px; height: 17px; fill: currentColor; }
+.chat-gear:hover, .chat-gear[aria-expanded="true"] { color: var(--text); background: var(--glass-3); }
+.chat-gear.on { color: var(--mint); }
+.chat-opts { position: absolute; right: 0; top: calc(100% + 6px); z-index: 40; width: 250px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); background: #141a3d; box-shadow: 0 18px 40px -12px rgba(0,0,0,.7); display: grid; gap: 7px; }
+.chat-opts .eyebrow { margin: 0 0 2px; }
+.chat-opts .check { display: flex; gap: 9px; align-items: center; font-size: 13px; cursor: pointer; }
+.chat-opts .check input { accent-color: var(--mint); width: 16px; height: 16px; }
+
+/* ---------- SIBrowser library ---------- */
+.lib-open { display: inline-flex; align-items: center; gap: 8px; justify-content: center; }
+.lib-open svg { width: 17px; height: 17px; fill: currentColor; }
+.lib-lobby { margin-top: 10px; width: 100%; }
+.lib { display: grid; gap: 12px; min-height: 0; }
+.lib-filters { display: grid; gap: 10px; }
+.lib-filters > .seg { justify-self: start; }
+.lib-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.lib-chips .note { min-width: 72px; }
+.chip-btn { font: 600 12px var(--font-body); color: var(--text-dim); background: rgba(0,0,0,.22); border: 1px solid var(--line); border-radius: 999px; padding: 5px 11px; cursor: pointer; }
+.chip-btn[aria-pressed="true"] { color: #08121f; background: var(--mint); border-color: var(--mint); }
+.chip-btn:disabled { opacity: .4; cursor: default; }
+.lib-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.lib-list { display: grid; gap: 10px; max-height: min(56vh, 620px); overflow-y: auto; padding-right: 4px; }
+.lib-card { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 14px; padding: 12px; border-radius: 16px; border: 1px solid var(--line); background: rgba(255,255,255,.035); }
+.lib-logo { width: 112px; height: 112px; object-fit: cover; border-radius: 12px; background: var(--glass-2); }
+.lib-body { display: grid; gap: 6px; min-width: 0; align-content: start; }
+.lib-body h3 { margin: 0; font-size: 16px; line-height: 1.25; overflow-wrap: anywhere; }
+.lib-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.lib-tags .tag { cursor: pointer; font-size: 11px; }
+.lib-media { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.lib-media span { position: relative; font-size: 11px; color: var(--text-dim); padding: 3px 6px; border-radius: 6px; background: rgba(0,0,0,.25); overflow: hidden; white-space: nowrap; }
+.lib-media i { position: absolute; inset: 0 auto 0 0; background: rgba(67,240,196,.18); z-index: 0; }
+.lib-desc { margin: 0; font-size: 13px; color: var(--text-dim); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.lib-rounds { font-size: 12px; color: var(--text-dim); }
+.lib-rounds summary { cursor: pointer; color: var(--text); font-weight: 600; }
+.lib-rounds div { margin-top: 4px; }
+.lib-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 2px; }
+.lib-progress { display: grid; gap: 4px; min-width: 220px; font-size: 12px; }
+.lib-error { color: #ffb3bf; margin: 0; }
+.lib-none { display: grid; gap: 12px; justify-items: start; }
+@media (max-width: 640px) {
+  .lib-card { grid-template-columns: 72px minmax(0, 1fr); gap: 10px; }
+  .lib-logo { width: 72px; height: 72px; }
+  .lib-media { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.chat .chat-head { flex-wrap: wrap; row-gap: 6px; }
+.chat .chat-head h2 { white-space: nowrap; }
+.chat-tools { flex: 1 1 auto; justify-content: flex-end; }
+.chat .chat-tools .seg { flex-wrap: nowrap; }

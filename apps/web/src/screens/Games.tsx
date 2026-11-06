@@ -4,6 +4,7 @@ import { type RoomSummary, type Settings } from "@kvz/protocol";
 import { deletePreset, loadLastChoice, loadPresets, saveLastChoice, savePreset, type Preset } from "../createPrefs.ts";
 import { abs, send, setPendingPack, useStore } from "../net.ts";
 import { SettingsForm, settingsSummary, Stepper } from "../settings.tsx";
+import { LibraryButton } from "./Library.tsx";
 import { avatarSrc, coverGradient, HiddenCover, HiddenName, initials, Lock, Modal, Seg, toggleFullscreen, useNow } from "../ui.tsx";
 
 export function Games({ onEditProfile, onSettings }: { onEditProfile: () => void; onSettings: () => void }) {
@@ -159,7 +160,6 @@ function roomTime(r: RoomSummary, now: number, t: T) {
 
 function CreateRoom({ onClose }: { onClose: () => void }) {
   const me = useStore((s) => s.me);
-  const demoPacks = useStore((s) => s.demoPacks);
   const t = useT();
   const [name, setName] = useState(me ? t.create.defaultName(me.name) : "");
   const [password, setPassword] = useState("");
@@ -235,11 +235,7 @@ function CreateRoom({ onClose }: { onClose: () => void }) {
               <span>{t.dropSiq}</span>
               <span className="btn ghost sm file-btn">{t.create.chooseFile}<input type="file" accept=".siq,.zip" onChange={(e) => pickFile(e.target.files?.[0])} /></span>
             </label>
-            {demoPacks.length > 0 && (
-              <div className="row"><span className="note">{t.create.orBuiltIn}</span>
-                {demoPacks.map((p) => <button key={p.id} type="button" className="btn sm" aria-pressed={pack?.demoId === p.id} onClick={() => setPack({ demoId: p.id, label: p.name })}>{p.name}</button>)}
-              </div>
-            )}
+            <LibraryButton onPick={pickFile} />
             <label className="check-row">
               <input type="checkbox" id="create-anon" checked={settings.anonPack} onChange={(e) => patch({ anonPack: e.target.checked })} />
               <span><b><Lock /> {t.anon.checkbox}</b><span className="note">{t.anon.note}</span></span>

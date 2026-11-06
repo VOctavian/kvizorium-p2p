@@ -6,7 +6,7 @@ import { usePrefs } from "../prefs.ts";
 import { playSound } from "../sounds.ts";
 import { VolumeChip } from "./Side.tsx";
 import { useHotkey } from "../hotkeys.ts";
-import { avatarSrc, HOST_AVATAR, LinkBanner, LinkMark, Mic, PackName, ReactionLayer, toggleFullscreen, useDrainStyle } from "../ui.tsx";
+import { avatarSrc, HOST_AVATAR, LinkBanner, LinkMark, PackName, ReactionLayer, toggleFullscreen, useDrainStyle } from "../ui.tsx";
 
 /** Anyone's name in the room (for a reaction from someone who just left, nothing). */
 const nameIn = (room: RoomView, id: string) => (room.host?.id === id ? room.host : room.players.find((p) => p.id === id) ?? room.viewers.find((v) => v.id === id))?.name;
@@ -262,7 +262,7 @@ const HostCard = memo(function HostCard({ host, auto, line, meIsHost, canTake, m
     <div className="host-side" onContextMenu={menu && host ? (e) => { e.preventDefault(); openPersonMenu(host.id, e.clientX, e.clientY); } : undefined}>
       {menu && host && <MoreButton id={host.id} label={t.menu.title(host.name)} className="on-card" />}
       {canTake && <button className="btn sm take-host" onClick={() => send({ t: "takeHost" })}>{t.menu.takeHost}</button>}
-      <div className="pic"><img src={auto || !host ? HOST_AVATAR : avatarSrc(host)} alt="" /><Mic />{!auto && host && <LinkMark p={host} />}</div>
+      <div className="pic"><img src={auto || !host ? HOST_AVATAR : avatarSrc(host)} alt="" />{!auto && host && <LinkMark p={host} />}</div>
       <div className="who">
         <span className="role">{auto ? t.room.autoHost : t.room.host}</span>
         <b>{auto || !host ? t.appName : host.name}</b>

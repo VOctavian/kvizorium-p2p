@@ -6,6 +6,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { pointLabel, pointToText, type MediaView, type PlayerView, type RoomView, type TimerView } from "@kvz/protocol";
 import { abs, send, sendPack, toast, useStore } from "../net.ts";
 import { SettingsForm, settingsSummary } from "../settings.tsx";
+import { LibraryButton } from "./Library.tsx";
 import { hasMenu, hostRights, isLeader, MoreButton, openPersonMenu } from "./PersonMenu.tsx";
 import { preloadMedia } from "../ui.tsx";
 import { avatarSrc, AwayText, coverGradient, LinkMark, FitText, HiddenCover, initials, Lock, MediaList, Modal, PackName, Seg, TimerBar, useGrowText, useNow, secondsLeft, type Playback, type PointLayer, type Reading } from "../ui.tsx";
@@ -18,7 +19,6 @@ const me = (room: RoomView): PlayerView | undefined => room.players.find((p) => 
 /* ---------- lobby ---------- */
 
 export function Lobby({ room }: { room: RoomView }) {
-  const demoPacks = useStore((s) => s.demoPacks);
   const uploading = useStore((s) => s.upload);
   const t = useT();
   const L = t.lobby;
@@ -101,12 +101,7 @@ export function Lobby({ room }: { room: RoomView }) {
                 <span className="btn ghost sm file-btn">{L.choosePack}<input type="file" accept=".siq,.zip" onChange={(e) => upload(e.target.files?.[0])} /></span>
                 {progress != null && <div className="progress"><i style={{ width: `${progress * 100}%` }} /></div>}
               </label>
-              {demoPacks.length > 0 && (
-                <div className="row" style={{ marginTop: 10 }}>
-                  <span className="note">{L.builtIn}</span>
-                  {demoPacks.map((p) => <button key={p.id} className="btn sm" onClick={() => send({ t: "useDemoPack", id: p.id })}>{p.name}</button>)}
-                </div>
-              )}
+              <LibraryButton onPick={(f) => upload(f)} className="lib-lobby" />
             </>
           )}
           <div className="settings">
@@ -119,7 +114,7 @@ export function Lobby({ room }: { room: RoomView }) {
               <span><b>{t.menu.openHost}</b><span className="note">{t.menu.openHostNote}</span></span>
             </label>
           )}
-          <div className="summary-tags" style={{ marginTop: 12 }}>{settingsSummary(s).slice(1).map((x) => <span key={x} className="tag">{x}</span>)}</div>
+          <div className="summary-tags" style={{ marginTop: 12 }}>{settingsSummary(s, true).slice(1).map((x) => <span key={x} className="tag">{x}</span>)}</div>
           <button className="btn ghost advanced-toggle" style={{ marginTop: 12 }} onClick={() => setShowSettings(true)}>
             {manage ? L.advanced : L.allSettings}<span className="chev" aria-hidden="true">▸</span>
           </button>
