@@ -18,13 +18,13 @@
 import { createEvent, joinRoom, subscribe as nostrSubscribe } from "trystero";
 import { buildSharedPack, errorMsg, handleRoomMsg, Room, type Hub, type LoadedPack, type PackHooks, type RoomSnapshot, type User } from "@kvz/game";
 import { gotPicture, onMissingPicture, smallPicture } from "./share.ts";
+import { ICE, loadTurn } from "./ice.ts";
 import { text, type ClientMsg, type Gender, type RoomSummary, type ServerMsg, type SharedFile, type Text } from "@kvz/protocol";
 
 type Mesh = ReturnType<typeof joinRoom>;
 type Json = never;
 
 const APP_ID = "kvizorium-p2p-2";
-const ICE: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun.cloudflare.com:3478" }];
 /**
  * Relays for finding each other. Trystero's own pick for an app id may include dead ones, and big
  * relays (damus) ban the burst of messages a connection takes, so: small relays from Trystero's
@@ -97,9 +97,9 @@ export function start(opts: {
   });
   welcome();
   deliver({ t: "stats", stats: { top: [], recent: [] } });
-  // After a reload: back into the room this tab was in.
+  // After a reload: back into the room this tab was in (once the TURN servers are known).
   const current = localStorage.getItem("kvz.p2p.current");
-  if (current) joinGame(current, undefined, false, true);
+  void loadTurn().finally(() => { if (current && !game) joinGame(current, undefined, false, true); });
 }
 
 function welcome() { deliver({ t: "welcome", you: { id: me.id, name: me.name, avatar: avatars.get(me.id)?.d }, demoPacks }); }
@@ -1072,8 +1072,9 @@ export function send(m: ClientMsg) {
       deliver({ t: "stats", stats: { top: [], recent: [] } });
       deliver({ t: "rooms", rooms: [...listed.values()].map((e) => e.summary) });
       return;
-    case "createRoom": return createGame(m);
-    case "joinRoom": return joinGame(m.roomId, m.password, m.asViewer);
+    // Connections start only once the TURN servers are known (at once without them).
+    case "createRoom": void loadTurn().then(() => createGame(m)); return;
+    case "joinRoom": void loadTurn().then(() => joinGame(m.roomId, m.password, m.asViewer)); return;
     case "leaveRoom":
       leaveGame();
       deliver({ t: "left" });

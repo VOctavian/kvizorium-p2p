@@ -27,6 +27,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build:pages
+        env:
+          # TURN servers (see apps/web/src/ice.ts): Settings → Secrets and variables → Actions → Variables.
+          VITE_TURN: ${{ vars.VITE_TURN }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: apps/web/dist

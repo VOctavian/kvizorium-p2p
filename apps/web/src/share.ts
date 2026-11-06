@@ -6,6 +6,7 @@
  */
 import { needsConversion, toPlayable } from "./convert.ts";
 import { MAX_PACK_MB, type ClientMsg, type SharedFile } from "@kvz/protocol";
+import { ICE } from "./ice.ts";
 
 /* ---------- wiring ---------- */
 
@@ -357,7 +358,6 @@ async function download(s: Swarm, f: number, from: string) {
 
 /* ---------- WebRTC ---------- */
 
-const ICE: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun.cloudflare.com:3478" }];
 const CHUNK = 16 * 1024;
 const HIGH_WATER = 4 * 1024 * 1024;
 const OPEN_MS = 15_000;
@@ -397,7 +397,7 @@ export async function onRtc(from: string, data: { sdp?: RTCSessionDescriptionIni
 }
 
 class Peer {
-  pc = new RTCPeerConnection({ iceServers: ICE });
+  pc = new RTCPeerConnection({ iceServers: [...ICE] });
   ch?: RTCDataChannel;
   ready: Promise<Peer>;
   private opened!: (p: Peer) => void;
