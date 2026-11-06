@@ -81,7 +81,7 @@ const ru = {
   kind: KIND_LABELS.ru as Record<QuestionKind, string>,
 
   welcome: {
-    about: "Своя квиз-игра на табло с темами и ценами. Играйте с друзьями по паку вопросов .siq или по встроенному демо-паку.",
+    about: "Своя квиз-игра на табло с темами и ценами. Играйте с друзьями: загрузите свой пак .siq или найдите любой в библиотеке SIBrowser.",
     play: "Играть",
   },
 
@@ -774,7 +774,7 @@ const en: Dict = {
   kind: KIND_LABELS.en as Record<QuestionKind, string>,
 
   welcome: {
-    about: "A quiz game on a board of themes and prices. Play with friends using a .siq question pack or the built-in demo pack.",
+    about: "A quiz game on a board of themes and prices. Play with friends: load your own .siq pack or find one in the SIBrowser library.",
     play: "Play",
   },
 
