@@ -268,6 +268,8 @@ export interface SharedFile {
   hash: string;
   /** AES-GCM key, base64 (the server hands it out when the item is shown). */
   key: string;
+  /** Seconds, for sound and video: measured by the leader's browser, so the reading lasts as long as the clip. */
+  dur?: number;
 }
 
 export interface RoomView {

@@ -53,6 +53,7 @@ export async function buildSharedPack(xml: string, files: SharedFile[]): Promise
   for (const f of files) {
     if (typeof f?.path !== "string" || f.path.length > 1000 || seen.has(f.path)) throw new Error("bad share");
     if (!Number.isSafeInteger(f.size) || f.size < 12 || !/^[0-9a-f]{64}$/.test(f.hash) || !/^[A-Za-z0-9+/]{43}=$/.test(f.key)) throw new Error("bad share");
+    if (f.dur != null && !(typeof f.dur === "number" && f.dur > 0 && f.dur < 36_000)) throw new Error("bad share");
     seen.add(f.path);
     total += f.size;
   }
@@ -72,7 +73,7 @@ export async function buildSharedPack(xml: string, files: SharedFile[]): Promise
       if (!it.isRef) return /^https?:\/\//i.test(it.value) ? { type: it.type, url: it.value, placement: it.placement } : { type: "text", text: it.value };
       const i = fileOf(it.value, it.type as MediaKind);
       if (i == null) return { type: "text", text: "[в паке нет файла]" };
-      return { type: it.type, file: i, key: files[i].key, mime: mimeOf(files[i].path), placement: it.placement, duration: it.duration };
+      return { type: it.type, file: i, key: files[i].key, mime: mimeOf(files[i].path), placement: it.placement, duration: it.duration ?? files[i].dur };
     });
   const questions = pack.rounds.reduce((n, r) => n + r.themes.reduce((m, t) => m + t.questions.length, 0), 0);
   const info: PackInfo = {

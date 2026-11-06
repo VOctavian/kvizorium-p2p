@@ -2,8 +2,9 @@
  * Peer mode: the game with no game server (for GitHub Pages).
  *
  * - Browsers find each other through public Nostr relays (Trystero) and talk over WebRTC.
- * - Everyone on the site sits in one "lobby" mesh and keeps the list of rooms: each room's keeper
- *   announces its room there, and a newcomer gets the whole list from whoever is online.
+ * - The list of rooms goes through the same relays as small messages (the "board"): each room's
+ *   keeper announces its room every few seconds, and a newcomer asks everyone to announce now.
+ *   No direct connection is needed to see the rooms.
  * - A room is kept by one member's browser (the keeper), which runs the same room logic as the
  *   server. It copies the room's state and pack to every member, so if its browser leaves, the next
  *   member takes over from the latest copy. A host who drops out simply comes back as a member.
@@ -12,23 +13,36 @@
  * - Two browsers that can't connect directly (strict NATs) talk through a third one: every message
  *   is an envelope addressed to a person, passed on by whoever is connected to both.
  */
-import { joinRoom } from "trystero";
+import { createEvent, joinRoom, subscribe as nostrSubscribe } from "trystero";
 import { buildSharedPack, errorMsg, handleRoomMsg, Room, type Hub, type LoadedPack, type PackHooks, type RoomSnapshot, type User } from "@kvz/game";
-import { text, type ClientMsg, type Gender, type RoomSummary, type ServerMsg, type SharedFile } from "@kvz/protocol";
+import { text, type ClientMsg, type Gender, type RoomSummary, type ServerMsg, type SharedFile, type Text } from "@kvz/protocol";
 
 type Mesh = ReturnType<typeof joinRoom>;
 type Json = never;
 
-const APP_ID = "kvizorium-p2p-1";
+const APP_ID = "kvizorium-p2p-2";
 const ICE: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun.cloudflare.com:3478" }];
+/**
+ * Relays for finding each other. Trystero's own pick for an app id may include dead ones, and big
+ * relays (damus) ban the burst of messages a connection takes, so: small relays from Trystero's
+ * list that were checked to pass these messages, several, so one down or blocked doesn't cut anyone off.
+ */
+const RELAYS = ["wss://nos.lol", "wss://nostr.rblb.it", "wss://nostr.red5d.dev", "wss://relay.nostr.dev.br", "wss://relay.layer.systems", "wss://relay.nostrmap.net", "wss://relay.hackshed.dev"];
+/** The room list is a few small messages a minute: big relays are fine for it too. */
+const BOARD_RELAYS = ["wss://nos.lol", "wss://relay.primal.net", "wss://nostr.mom", "wss://nostr.rblb.it", "wss://relay.layer.systems"];
+const MESH = { appId: APP_ID, rtcConfig: { iceServers: ICE }, relayConfig: { urls: RELAYS } };
 /** The keeper says it's alive this often; silent for KEEPER_SILENT, it's replaced. */
 const BEAT_MS = 2000;
 const KEEPER_SILENT = 7000;
-/** How long a newcomer waits to hear from a room's keeper. */
-const JOIN_WAIT = 9000;
+/**
+ * How long a newcomer waits to get through to a room. Over the internet a first connection can
+ * take a while; a room on the board is known to exist, so it's worth waiting longer for.
+ */
+const JOIN_WAIT = 15_000;
+const JOIN_WAIT_LISTED = 35_000;
 /** A room not announced for this long leaves the list. */
-const LISTED_TTL = 25_000;
-const ANNOUNCE_MS = 5000;
+const LISTED_TTL = 35_000;
+const ANNOUNCE_MS = 10_000;
 /** Can't get through to the keeper this long: rejoin the room's mesh to retry the connections. */
 const REJOIN_MS = 15_000;
 /** A copy saved on disk can bring a room back for this long. */
@@ -38,14 +52,22 @@ const SAVED_TTL = 24 * 3600_000;
 
 let me = { id: "", name: "", gender: undefined as Gender | undefined };
 let deliver: (m: ServerMsg) => void = () => {};
+let notify: (t: Text) => void = () => {};
 let onDemoPack: (id: string) => void = () => {};
+let onAvatars: () => void = () => {};
 let demoPacks: { id: string; name: string }[] = [];
 
-export function start(opts: { id: string; name: string; gender?: Gender; deliver: (m: ServerMsg) => void; onDemoPack: (id: string) => void }) {
+export function start(opts: {
+  id: string; name: string; gender?: Gender; avatar?: string;
+  deliver: (m: ServerMsg) => void; notify: (t: Text) => void; onDemoPack: (id: string) => void; onAvatars: () => void;
+}) {
   me = { id: opts.id, name: opts.name, gender: opts.gender };
   deliver = opts.deliver;
+  notify = opts.notify;
   onDemoPack = opts.onDemoPack;
-  joinLobby();
+  onAvatars = opts.onAvatars;
+  if (opts.avatar) void setMyAvatar(opts.avatar);
+  openBoard();
   void fetch("packs/index.json").then((r) => (r.ok ? r.json() : []), () => []).then((list: { id: string; name: string }[]) => {
     demoPacks = Array.isArray(list) ? list : [];
     welcome();
@@ -54,33 +76,22 @@ export function start(opts: { id: string; name: string; gender?: Gender; deliver
   deliver({ t: "stats", stats: { top: [], recent: [] } });
   // After a reload: back into the room this tab was in.
   const current = localStorage.getItem("kvz.p2p.current");
-  if (current) joinGame(current, undefined, false);
+  if (current) joinGame(current, undefined, false, true);
 }
 
-function welcome() { deliver({ t: "welcome", you: { id: me.id, name: me.name }, demoPacks }); }
+function welcome() { deliver({ t: "welcome", you: { id: me.id, name: me.name, avatar: avatars.get(me.id)?.d }, demoPacks }); }
 
-/* ---------- the lobby: everyone online keeps the room list ---------- */
+/* ---------- the board: the room list, straight through the relays ---------- */
 
 interface Listed { summary: RoomSummary; at: number; changedAt: number }
 const listed = new Map<string, Listed>();
-let lobby: Mesh | undefined;
-let sendRooms: ((data: Json, opts?: { target?: string }) => Promise<void>) | undefined;
 let roomsTimer: ReturnType<typeof setTimeout> | undefined;
+const BOARD_TOPIC = `${APP_ID}/rooms`;
+const boardSockets = new Map<string, WebSocket>();
+type BoardMsg = { r?: { id: string; at: number; s?: RoomSummary; gone?: boolean }[]; q?: 1 };
 
-function joinLobby() {
-  lobby = joinRoom({ appId: APP_ID, rtcConfig: { iceServers: ICE } }, "lobby");
-  const rooms = lobby.makeAction<Json>("rooms", {
-    onMessage: (data) => mergeRooms(data as unknown as { id: string; at: number; s?: RoomSummary; gone?: boolean }[]),
-  });
-  sendRooms = (data, opts) => rooms.send(data, opts);
-  // A newcomer gets everything this browser knows.
-  lobby.onPeerJoin = (peerId) => { void sendRooms?.(tableOut() as Json, { target: peerId }); };
-  // Gossip: now and then the whole list goes to one random peer, so it spreads even to those who
-  // can't connect to a room's keeper directly.
-  setInterval(() => {
-    const peers = Object.keys(lobby?.getPeers() ?? {});
-    if (peers.length && listed.size) void sendRooms?.(tableOut() as Json, { target: peers[Math.floor(Math.random() * peers.length)] });
-  }, 15_000);
+function openBoard() {
+  for (const url of BOARD_RELAYS) connectBoard(url, 0);
   setInterval(() => {
     const now = Date.now();
     let dropped = false;
@@ -89,7 +100,43 @@ function joinLobby() {
   }, 5000);
 }
 
-function tableOut() { return [...listed].map(([id, e]) => ({ id, at: e.at, s: e.summary })); }
+function connectBoard(url: string, attempt: number) {
+  let ws: WebSocket;
+  try { ws = new WebSocket(url); } catch { return; }
+  boardSockets.set(url, ws);
+  ws.onopen = () => {
+    attempt = 0;
+    ws.send(nostrSubscribe(`kvz${Math.random().toString(36).slice(2, 10)}`, BOARD_TOPIC));
+    // A newcomer: whoever keeps a room, announce it now.
+    void boardSend({ q: 1 }, ws);
+  };
+  ws.onmessage = (e) => {
+    try {
+      const m = JSON.parse(String(e.data));
+      if (m[0] === "EVENT" && typeof m[2]?.content === "string") onBoard(JSON.parse(m[2].content) as BoardMsg);
+    } catch { /* not ours */ }
+  };
+  ws.onclose = () => {
+    if (boardSockets.get(url) === ws) boardSockets.delete(url);
+    setTimeout(() => connectBoard(url, attempt + 1), Math.min(120_000, 3000 * 2 ** attempt));
+  };
+}
+
+async function boardSend(m: BoardMsg, only?: WebSocket) {
+  const ev = await createEvent(BOARD_TOPIC, JSON.stringify(m));
+  for (const ws of only ? [only] : boardSockets.values()) if (ws.readyState === WebSocket.OPEN) ws.send(ev);
+}
+
+let askedAt = 0;
+function onBoard(m: BoardMsg) {
+  if (Array.isArray(m?.r)) mergeRooms(m.r);
+  // Someone new asks: the keeper answers soon (a little apart, so not all at once).
+  if (m?.q && game?.room && Date.now() - askedAt > 3000) {
+    askedAt = Date.now();
+    const g = game;
+    setTimeout(() => announce(g), 300 + Math.random() * 1500);
+  }
+}
 
 function mergeRooms(entries: { id: string; at: number; s?: RoomSummary; gone?: boolean }[]) {
   if (!Array.isArray(entries)) return;
@@ -119,19 +166,116 @@ function announce(g: Game, gone = false) {
   if (!g.room) return;
   const entry = { id: g.code, at: Date.now(), s: gone ? undefined : g.room.summary(), gone: gone || undefined };
   mergeRooms([entry]);
-  void sendRooms?.([entry] as Json);
+  void boardSend({ r: [entry] });
+}
+
+/** The room is on the board and someone keeps announcing it. */
+const alive = (code: string) => { const e = listed.get(code); return !!e && Date.now() - e.changedAt < LISTED_TTL; };
+
+/* ---------- avatars ---------- */
+
+/**
+ * Pictures travel once per person, not in every update: the room only carries "p2p:<id>:<version>",
+ * and each browser asks for a picture it hasn't got (from the person, or from the keeper).
+ */
+const avatars = new Map<string, { v: string; d: string }>();
+/** The latest version known for each person (the picture itself may not be here yet). */
+const avVer = new Map<string, string>();
+const MAX_AVATAR = 400_000;
+
+const verOf = (d: string) => { let h = 2166136261; for (let i = 0; i < d.length; i++) h = Math.imul(h ^ d.charCodeAt(i), 16777619) >>> 0; return h.toString(36); };
+const tokenOf = (id: string) => { const v = avVer.get(id); return v ? `p2p:${id}:${v}` : undefined; };
+
+/** The picture for a "p2p:" token, if it's here. */
+export function avatarOf(token: string): string | undefined {
+  const [, id, v] = token.split(":");
+  const a = avatars.get(id);
+  return a && a.v === v ? a.d : undefined;
+}
+
+const asked = new Map<string, number>();
+/** Asks for someone's picture (the UI calls this for tokens it can't show yet). */
+export function wantAvatar(token: string) {
+  const [, id, v] = token.split(":");
+  const g = game;
+  if (!g || !id || avatars.get(id)?.v === v || Date.now() - (asked.get(token) ?? 0) < 8000) return;
+  asked.set(token, Date.now());
+  const to = peerOf(g, id) ? id : g.keeper && g.keeper !== me.id ? g.keeper : id;
+  post(g, to, "wantav", { u: id });
+}
+
+/** Small and square: 128 px is plenty for a seat. An animated GIF is kept as it is if it's small. */
+async function shrink(src: string): Promise<string> {
+  if (src.startsWith("data:image/gif") && src.length <= MAX_AVATAR) return src;
+  const img = new Image();
+  // Not img.decode(): a tab in the background may put it off indefinitely.
+  const loaded = await new Promise<boolean>((ok) => {
+    const t = setTimeout(() => ok(false), 5000);
+    img.onload = () => { clearTimeout(t); ok(true); };
+    img.onerror = () => { clearTimeout(t); ok(false); };
+    img.src = src;
+  });
+  if (!loaded || !img.naturalWidth) return src;
+  const side = 128;
+  const c = document.createElement("canvas");
+  c.width = c.height = side;
+  const k = Math.max(side / img.naturalWidth, side / img.naturalHeight);
+  const w = img.naturalWidth * k, h = img.naturalHeight * k;
+  c.getContext("2d")!.drawImage(img, (side - w) / 2, (side - h) / 2, w, h);
+  const webp = c.toDataURL("image/webp", 0.85);
+  return webp.startsWith("data:image/webp") ? webp : c.toDataURL("image/jpeg", 0.85);
+}
+
+async function setMyAvatar(src: string | null) {
+  if (!src) { avatars.delete(me.id); avVer.delete(me.id); }
+  else {
+    let d: string;
+    try { d = await shrink(src); } catch { return; }
+    if (d.length > MAX_AVATAR) return;
+    avatars.set(me.id, { v: verOf(d), d });
+    avVer.set(me.id, verOf(d));
+  }
+  welcome();
+  onAvatars();
+  const g = game;
+  if (!g) return;
+  g.hello();
+  if (g.room) { userFor(g, me.id, me.name, me.gender); g.room.changed(); }
+  else { const a = avatars.get(me.id); if (a) post(g, "*", "av", { u: me.id, ...a }); }
+}
+
+function onAvatar(g: Game, from: string, d: { u: string; v: string; d: string }) {
+  if (typeof d?.u !== "string" || typeof d.v !== "string" || typeof d.d !== "string") return;
+  if (d.d.length > MAX_AVATAR || !/^data:image\/(png|jpeg|gif|webp);base64,/.test(d.d) || verOf(d.d) !== d.v) return;
+  // Only the person themselves sets a new version; others pass on the one already announced.
+  if (from !== d.u && avVer.get(d.u) !== d.v) return;
+  if (avatars.get(d.u)?.v === d.v) return;
+  avatars.set(d.u, { v: d.v, d: d.d });
+  avVer.set(d.u, d.v);
+  onAvatars();
+  const u = g.users.get(d.u);
+  if (g.room && u) { u.avatar = tokenOf(d.u); g.room.changed(); }
+}
+
+/** Someone's version from a greeting or the room's copy: ask for the picture if it's new. */
+function knowVersion(g: Game, id: string, v: string | undefined, ask: boolean) {
+  if (id === me.id || avVer.get(id) === v) return;
+  if (v) avVer.set(id, v); else avVer.delete(id);
+  const u = g.users.get(id);
+  if (u) { u.avatar = tokenOf(id); g.room?.changed(); }
+  if (v && ask && avatars.get(id)?.v !== v) post(g, id, "wantav", { u: id });
 }
 
 /* ---------- a room ---------- */
 
-interface StateMsg { term: number; keeper: string; rev: number; snap: RoomSnapshot; names: Record<string, { n: string; g?: Gender }> }
+interface StateMsg { term: number; keeper: string; rev: number; snap: RoomSnapshot; names: Record<string, { n: string; g?: Gender; a?: string }> }
 interface PackData { hash: string; xml: string; files: SharedFile[] }
 
 /**
  * Everything in a room travels in envelopes addressed to a person (or to everyone): if two browsers
  * can't connect directly (strict NATs), the envelope goes through someone connected to both.
  */
-type Kind = "c2s" | "s2c" | "state" | "beat" | "pack" | "wantpack" | "wantstate";
+type Kind = "c2s" | "s2c" | "state" | "beat" | "pack" | "wantpack" | "wantstate" | "av" | "wantav";
 interface Envelope { i: string; f: string; t: string; k: Kind; d: unknown; h: number }
 /** Who each person is directly connected to (and their names), from their reports. */
 interface Reach { at: number; links: Map<string, { n: string; g?: Gender }> }
@@ -156,6 +300,8 @@ interface Game {
   users: Map<string, User>;
   sentRev: number;
   joining?: { password?: string; asViewer?: boolean; timer: ReturnType<typeof setTimeout> };
+  /** Last time the keeper looked at who is online and swept out the long gone. */
+  sweptAt: number;
   inRoom: boolean;
   queue: ClientMsg[];
   timers: ReturnType<typeof setInterval>[];
@@ -172,7 +318,7 @@ const blocked = () => new Set((localStorage.getItem("kvz.p2p.block") ?? "").spli
 function openGame(code: string): Game {
   const g: Game = {
     code, mesh: undefined as unknown as Mesh, env: () => {}, hello: () => {}, reachOut: () => {}, peers: new Map(), reach: new Map(), seen: new Set(),
-    term: 0, heardAt: Date.now(), users: new Map(), sentRev: -1, inRoom: false, queue: [], timers: [], skip: new Set(), rejoinedAt: Date.now(),
+    term: 0, heardAt: Date.now(), users: new Map(), sentRev: -1, inRoom: false, queue: [], timers: [], skip: new Set(), rejoinedAt: Date.now(), sweptAt: 0,
   };
   attachMesh(g);
   g.timers.push(setInterval(() => tick(g), 500));
@@ -184,14 +330,14 @@ function openGame(code: string): Game {
 
 /** Joins the room's mesh (again, after a retry). */
 function attachMesh(g: Game) {
-  const mesh = joinRoom({ appId: APP_ID, rtcConfig: { iceServers: ICE } }, `room-${g.code}`);
+  const mesh = joinRoom(MESH, `room-${g.code}`);
   g.mesh = mesh;
   g.peers.clear();
   const live = () => game === g && g.mesh === mesh;
-  const hello = mesh.makeAction<Json>("hello", { onMessage: (d, ctx) => { if (live()) onHello(g, ctx.peerId, d as unknown as { u: string; n: string; g?: Gender }); } });
+  const hello = mesh.makeAction<Json>("hello", { onMessage: (d, ctx) => { if (live()) onHello(g, ctx.peerId, d as unknown as Hello); } });
   const reach = mesh.makeAction<Json>("reach", { onMessage: (d, ctx) => { if (live()) onReach(g, ctx.peerId, d as unknown as { u: string; r: [string, string, Gender?][] }); } });
   const env = mesh.makeAction<Json>("env", { onMessage: (d, ctx) => { if (live()) onEnvelope(g, ctx.peerId, d as unknown as Envelope); } });
-  g.hello = (target) => { void hello.send({ u: me.id, n: me.name, g: me.gender } as Json, target ? { target } : undefined); };
+  g.hello = (target) => { void hello.send({ u: me.id, n: me.name, g: me.gender, a: avVer.get(me.id) } satisfies Hello as unknown as Json, target ? { target } : undefined); };
   g.env = (e, target) => { void env.send(e as unknown as Json, target ? { target } : undefined); };
   g.reachOut = () => {
     const r = [...g.peers.values()].map((p) => [p.userId, p.name, p.gender]);
@@ -274,12 +420,21 @@ function dispatch(g: Game, from: string, k: Kind, d: unknown) {
     case "pack": return onPack(g, d as PackData);
     case "wantpack": if (g.pack && g.pack.hash === (d as { hash: string })?.hash) post(g, from, "pack", g.pack); return;
     case "wantstate": if (g.room) sendState(g, from); return;
+    case "av": return onAvatar(g, from, d as { u: string; v: string; d: string });
+    case "wantav": {
+      const id = (d as { u?: unknown })?.u;
+      const a = typeof id === "string" ? avatars.get(id) : undefined;
+      if (a) post(g, from, "av", { u: id, ...a });
+      return;
+    }
   }
 }
 
-function onHello(g: Game, peerId: string, d: { u: string; n: string; g?: Gender }) {
+interface Hello { u: string; n: string; g?: Gender; a?: string }
+function onHello(g: Game, peerId: string, d: Hello) {
   if (typeof d?.u !== "string" || blocked().has(d.u)) return;
   g.peers.set(peerId, { userId: d.u, name: String(d.n ?? "Игрок").slice(0, 24), gender: d.g });
+  knowVersion(g, d.u, typeof d.a === "string" ? d.a : undefined, true);
   g.reachOut();
   refreshOnline(g);
   if (d.u === g.keeper) keeperFound(g);
@@ -325,6 +480,7 @@ function userFor(g: Game, id: string, name: string, gender?: Gender): User {
     u = { id, token: "", name, gender, online: id === me.id, lastChat: 0, send: (m) => sendToUser(g, id, m) };
     g.users.set(id, u);
   } else { u.name = name; u.gender = gender; }
+  u.avatar = tokenOf(id);
   return u;
 }
 
@@ -388,7 +544,7 @@ function onFromMember(g: Game, from: string, m: ClientMsg) {
 
 function namesOf(g: Game) {
   const names: StateMsg["names"] = {};
-  for (const [id, u] of g.users) names[id] = { n: u.name, g: u.gender };
+  for (const [id, u] of g.users) names[id] = { n: u.name, g: u.gender, a: avVer.get(id) };
   return names;
 }
 
@@ -414,6 +570,8 @@ function tick(g: Game) {
     if (now - lastBeat > BEAT_MS) { lastBeat = now; post(g, "*", "beat", { term: g.term, keeper: me.id, rev: g.room.rev }); }
     if (now - lastAnnounce > ANNOUNCE_MS) { lastAnnounce = now; announce(g); }
     if (now - lastSave > 5000) { lastSave = now; void saveCopy(g); }
+    // Reports about who is connected go stale without a word: look again now and then.
+    if (now - g.sweptAt > 2000) { g.sweptAt = now; refreshOnline(g); g.room.sweepOffline(now); }
     return;
   }
   // No word from the keeper and no way to it: maybe the connection itself is stuck. Try again.
@@ -443,6 +601,7 @@ function onState(g: Game, s: StateMsg, from: string) {
   g.term = s.term;
   g.keeper = s.keeper;
   g.last = s;
+  for (const [id, n] of Object.entries(s.names ?? {})) knowVersion(g, id, typeof n?.a === "string" ? n.a : undefined, false);
   g.heardAt = Date.now();
   g.skip.clear();
   g.expected = undefined;
@@ -480,6 +639,8 @@ function keeperFound(g: Game) {
     const { password, asViewer } = g.joining;
     g.joining = undefined;
     toKeeper(g, { t: "joinRoom", roomId: g.code, password, asViewer });
+    const a = avatars.get(me.id);
+    if (a && g.keeper !== me.id) post(g, g.keeper, "av", { u: me.id, ...a });
   }
   for (const m of g.queue.splice(0)) toKeeper(g, m);
 }
@@ -539,7 +700,10 @@ async function takeOver(g: Game, from: StateMsg, term: number) {
   let pack: LoadedPack | undefined;
   if (g.pack) { try { pack = await buildSharedPack(g.pack.xml, g.pack.files); } catch { pack = undefined; } }
   if (game !== g || g.room) return;
-  for (const [id, n] of Object.entries(from.names ?? {})) userFor(g, id, n.n, n.g);
+  for (const [id, n] of Object.entries(from.names ?? {})) {
+    if (id !== me.id && typeof n.a === "string") avVer.set(id, n.a);
+    userFor(g, id, n.n, n.g);
+  }
   const can = reachable(g);
   for (const u of g.users.values()) u.online = can.has(u.id);
   const room = Room.restore(from.snap, hubFor(g), pack, "ev.takeover");
@@ -622,11 +786,12 @@ function createGame(m: Extract<ClientMsg, { t: "createRoom" }>) {
   announce(g);
 }
 
-function joinGame(code: string, password: string | undefined, asViewer: boolean | undefined) {
+function joinGame(code: string, password: string | undefined, asViewer: boolean | undefined, quiet = false) {
   code = code.toUpperCase().trim();
   if (game?.code === code) return;
   if (game) leaveGame();
   const g = openGame(code);
+  if (!quiet) notify(text("ev.joiningRoom", { code }));
   g.joining = {
     password, asViewer,
     // Nobody answers: bring the room back from this browser's copy, or give up.
@@ -634,8 +799,10 @@ function joinGame(code: string, password: string | undefined, asViewer: boolean 
       void loadCopy(code).then((copy) => {
         if (game !== g || !g.joining) return;
         g.joining = undefined;
-        if (!copy) {
-          deliver(errorMsg(text("err.roomLost")));
+        // Someone else still keeps it (it's on the board): this browser just can't get through.
+        // Bringing back its own copy would split the room in two.
+        if (alive(code) || !copy) {
+          deliver(errorMsg(text(alive(code) ? "err.noRoute" : "err.roomLost")));
           closeGame(g);
           return;
         }
@@ -643,7 +810,7 @@ function joinGame(code: string, password: string | undefined, asViewer: boolean 
         g.last = copy.state;
         void takeOver(g, copy.state, copy.state.term + 1);
       });
-    }, JOIN_WAIT),
+    }, alive(code) ? JOIN_WAIT_LISTED : JOIN_WAIT),
   };
 }
 
@@ -679,6 +846,7 @@ export function send(m: ClientMsg) {
     case "profile":
       if (m.name?.trim()) me.name = m.name.trim().slice(0, 24);
       if (m.gender !== undefined) me.gender = m.gender ?? undefined;
+      if (m.avatar !== undefined) void setMyAvatar(m.avatar);
       welcome();
       if (game) game.hello();
       if (game?.room) { userFor(game, me.id, me.name, me.gender); game.room.changed(); }

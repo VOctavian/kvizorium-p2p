@@ -75,7 +75,8 @@ export function serverBase(): string {
   return (LS.get("kvz.server") || window.kvz?.serverUrl || location.origin).replace(/\/+$/, "");
 }
 export function setServerBase(url: string | null) { LS.set("kvz.server", url); }
-export const abs = (url?: string) => (url && url.startsWith("/") ? serverBase() + url : url);
+/** A server path made absolute. A peer-mode avatar whose picture hasn't arrived yet shows as none. */
+export const abs = (url?: string) => (!url ? url : url.startsWith("/") ? serverBase() + url : url.startsWith("p2p:") ? undefined : url);
 
 export function loadProfile(): Profile | null {
   const name = LS.get("kvz.name");
@@ -184,7 +185,10 @@ export function connect() {
     set({ status: "connecting" });
     void import("./p2p.ts").then((mod) => {
       peer = mod;
-      mod.start({ id: peerId(), name: profile.name, gender: profile.gender, deliver: onMessage, onDemoPack: (id) => void useDemoPack(id) });
+      mod.start({
+        id: peerId(), name: profile.name, gender: profile.gender, avatar: profile.avatar,
+        deliver: onMessage, notify: (t) => toast(tr().tx(t), "info"), onDemoPack: (id) => void useDemoPack(id), onAvatars: avatarsArrived,
+      });
       set({ status: "open" });
     });
     return;
@@ -208,7 +212,40 @@ export function connect() {
   };
 }
 
-function onMessage(m: ServerMsg) {
+/**
+ * Peer mode: avatars come as "p2p:<id>:<version>" and the pictures separately. Swaps in the ones
+ * that are here and asks for the rest (they stay tokens, shown as the default face, until then).
+ */
+function withAvatars<T>(x: T): T {
+  if (!PEER_MODE || !peer) return x;
+  const p = peer;
+  const walk = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(walk);
+    if (!v || typeof v !== "object") return v;
+    const out: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(v)) {
+      if (k === "avatar" && typeof val === "string" && val.startsWith("p2p:")) {
+        const pic = p.avatarOf(val);
+        if (!pic) p.wantAvatar(val);
+        out[k] = pic ?? val;
+      } else out[k] = walk(val);
+    }
+    return out;
+  };
+  return walk(x) as T;
+}
+
+/** New pictures arrived: show them wherever their tokens are. */
+function avatarsArrived() {
+  set({
+    room: state.room && share(state.room, withAvatars(state.room)),
+    chat: share(state.chat, withAvatars(state.chat)),
+    rooms: share(state.rooms, withAvatars(state.rooms)),
+  });
+}
+
+function onMessage(raw: ServerMsg) {
+  const m = raw.t === "room" || raw.t === "chat" || raw.t === "rooms" ? withAvatars(raw) : raw;
   switch (m.t) {
     case "welcome": return set({ me: m.you, demoPacks: m.demoPacks });
     case "rooms": return set({ rooms: share(state.rooms, m.rooms) });

@@ -271,6 +271,15 @@ function CreateRoom({ onClose }: { onClose: () => void }) {
   );
 }
 
+/**
+ * Codes are Latin letters and digits. Typed on a Russian layout or copied from a chat, the same-looking
+ * Cyrillic letters (А, В, Е, К, М, Н, Р, С, Т, Х, У) are taken for the Latin ones; spaces are dropped.
+ */
+const LOOKALIKE: Record<string, string> = { А: "A", В: "B", Е: "E", К: "K", М: "M", Н: "H", О: "O", Р: "P", С: "C", Т: "T", Х: "X", У: "Y", З: "3", Ч: "4", Б: "6" };
+function normalizeCode(s: string): string {
+  return [...s.toUpperCase().replace(/[\s-]+/g, "")].map((c) => LOOKALIKE[c] ?? c).join("").slice(0, 4);
+}
+
 function JoinModal({ room, askCode, onClose }: { room?: RoomSummary; askCode: boolean; onClose: () => void }) {
   const [code, setCode] = useState(room?.id ?? "");
   const [password, setPassword] = useState("");
@@ -281,10 +290,10 @@ function JoinModal({ room, askCode, onClose }: { room?: RoomSummary; askCode: bo
       <form style={{ display: "grid", gap: 14 }} onSubmit={(e) => {
         e.preventDefault();
         if (code.trim().length < 4) return setErr(t.join.codeLength);
-        send({ t: "joinRoom", roomId: code.trim().toUpperCase(), password: password || undefined });
+        send({ t: "joinRoom", roomId: normalizeCode(code), password: password || undefined });
         onClose();
       }}>
-        {askCode && <label className="field"><span>{t.join.code}</span><input className="input code" id="join-code" value={code} maxLength={4} placeholder="QZ4F" autoFocus onChange={(e) => { setCode(e.target.value.toUpperCase()); setErr(""); }} /></label>}
+        {askCode && <label className="field"><span>{t.join.code}</span><input className="input code" id="join-code" value={code} maxLength={8} placeholder="QZ4F" autoFocus onChange={(e) => { setCode(normalizeCode(e.target.value)); setErr(""); }} /></label>}
         {(!room || room.hasPassword) && <label className="field"><span>{t.join.password}{room ? "" : t.join.ifAny}</span><input className="input" id="join-password" type="password" value={password} autoFocus={!askCode} onChange={(e) => setPassword(e.target.value)} /></label>}
         {err && <p className="err">{err}</p>}
         <div className="foot"><button type="button" className="btn ghost" onClick={onClose}>{t.cancel}</button><button className="btn primary" type="submit">{t.enter}</button></div>

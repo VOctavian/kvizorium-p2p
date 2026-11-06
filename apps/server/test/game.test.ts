@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import WebSocket from "ws";
 import { formatText, type ChatItem, type ClientMsg, type RoomView, type ServerMsg } from "@kvz/protocol";
 import { startServer } from "../src/index.ts";
+import { OFFLINE_LOBBY_MS, Room } from "@kvz/game";
 
 let srv: Awaited<ReturnType<typeof startServer>>;
 before(async () => {
@@ -1063,4 +1064,43 @@ test("limits: a flood of messages is cut, too many connections from one address 
   } finally {
     await quick.close();
   }
+});
+
+test("leaving frees the seat; someone gone for long gives it up too", async () => {
+  // Leaves in the middle of a game: off the table at once (the seat stays, free).
+  const a = new Client("Уходит А");
+  const b = new Client("Уходит Б");
+  const c = new Client("Уходит В");
+  for (const x of [a, b, c]) await x.open();
+  a.send({ t: "createRoom", name: "Уход", settings: { hostMode: "auto" }, asHost: false });
+  const r0 = await a.until((r) => !!r.id);
+  for (const x of [b, c]) { x.send({ t: "joinRoom", roomId: r0.id }); await x.until((r) => r.id === r0.id); }
+  a.send({ t: "useDemoPack", id: "demo.siq" });
+  await a.until((r) => !!r.pack && r.players.length === 3);
+  a.send({ t: "start", force: true });
+  await a.until((r) => r.phase === "choosing", 10000);
+  const cid = c.room!.me.id;
+  c.send({ t: "leaveRoom" });
+  const after = await a.until((r) => !r.players.some((p) => p.id === cid));
+  assert.equal(after.players.length, 2);
+  assert.notEqual(after.chooserId, cid);
+  for (const x of [a, b, c]) x.close();
+
+  // Closed the tab without a word: the keeper's sweep frees the seat after a while.
+  const users = new Map<string, { id: string; name: string; online: boolean; send: () => void; lastChat: number; token: string; roomId?: string }>();
+  const mk = (id: string) => { const u = { id, name: id, online: true, send: () => {}, lastChat: 0, token: "" }; users.set(id, u); return u; };
+  const owner = mk("o"), p = mk("p");
+  const room = new Room("SWEP", { user: (id) => users.get(id), roomsChanged: () => {} }, owner, { name: "Метла", settings: {}, asHost: false });
+  room.join(owner);
+  room.join(p);
+  assert.equal(room.players.length, 2);
+  const t0 = Date.now();
+  p.online = false;
+  room.sweepOffline(t0);
+  room.sweepOffline(t0 + OFFLINE_LOBBY_MS - 1000);
+  assert.equal(room.players.length, 2, "a reload or a short drop keeps the seat");
+  room.sweepOffline(t0 + OFFLINE_LOBBY_MS + 1);
+  assert.deepEqual(room.players.map((x) => x.id), ["o"]);
+  assert.ok(!room.members.has("p"));
+  room.dispose();
 });

@@ -83,6 +83,29 @@ export class ShareError extends Error {
 }
 
 /** Unpacks and encrypts a pack in this browser; the files stay here, ready to be shared. */
+const MEDIA_EXT = /\.(mp3|ogg|oga|opus|wav|m4a|aac|flac|mp4|m4v|webm|mov|ogv|mkv)$/i;
+
+/** How long a sound or a video plays, in seconds (undefined if the browser can't tell). */
+function durationOf(bytes: Uint8Array): Promise<number | undefined> {
+  return new Promise((done) => {
+    const url = URL.createObjectURL(new Blob([bytes as Uint8Array<ArrayBuffer>]));
+    const el = document.createElement("video");
+    const finish = (d?: number) => {
+      clearTimeout(timer);
+      el.removeAttribute("src");
+      el.load();
+      URL.revokeObjectURL(url);
+      done(d && Number.isFinite(d) && d > 0 && d < 36_000 ? Math.round(d * 10) / 10 : undefined);
+    };
+    const timer = setTimeout(() => finish(), 5000);
+    el.preload = "metadata";
+    el.muted = true;
+    el.onloadedmetadata = () => finish(el.duration);
+    el.onerror = () => finish();
+    el.src = url;
+  });
+}
+
 export async function preparePack(file: File, onProgress: (p: number) => void): Promise<{ xml: string; files: SharedFile[] }> {
   if (file.size > MAX_PACK_MB * 1048576) throw new ShareError("tooBig");
   // The unzipper and the XML parser are needed only by the leader: loaded on demand.
@@ -93,6 +116,7 @@ export async function preparePack(file: File, onProgress: (p: number) => void): 
     const files: SharedFile[] = [];
     for (const [i, f] of opened.files.entries()) {
       const plain = await opened.read(f.path);
+      const dur = MEDIA_EXT.test(f.path) ? await durationOf(plain) : undefined;
       const key = crypto.getRandomValues(new Uint8Array(32));
       const iv = crypto.getRandomValues(new Uint8Array(12));
       const ck = await crypto.subtle.importKey("raw", key, "AES-GCM", false, ["encrypt"]);
@@ -102,7 +126,7 @@ export async function preparePack(file: File, onProgress: (p: number) => void): 
       whole.set(ct, 12);
       const hash = await sha256(whole);
       await store(hash, new Blob([whole]));
-      files.push({ path: f.path, size: whole.length, hash, key: toB64(key) });
+      files.push({ path: f.path, size: whole.length, hash, key: toB64(key), ...(dur ? { dur } : {}) });
       onProgress((i + 1) / opened.files.length);
     }
     return { xml: opened.xml, files };

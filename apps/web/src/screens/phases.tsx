@@ -8,7 +8,7 @@ import { abs, send, sendPack, toast, useStore } from "../net.ts";
 import { SettingsForm, settingsSummary } from "../settings.tsx";
 import { hasMenu, hostRights, isLeader, MoreButton, openPersonMenu } from "./PersonMenu.tsx";
 import { preloadMedia } from "../ui.tsx";
-import { avatarSrc, coverGradient, FitText, HiddenCover, initials, Lock, MediaList, Modal, PackName, Seg, TimerBar, useNow, secondsLeft, type Reading } from "../ui.tsx";
+import { avatarSrc, coverGradient, FitText, HiddenCover, initials, Lock, MediaList, Modal, PackName, Seg, TimerBar, useGrowText, useNow, secondsLeft, type Playback, type Reading } from "../ui.tsx";
 
 const nameOf = (room: RoomView, id?: string) => room.players.find((p) => p.id === id)?.name ?? (room.host?.id === id ? room.host?.name : undefined) ?? tr().player;
 const isManager = isLeader;
@@ -290,8 +290,10 @@ function Secs({ timer }: { timer?: TimerView }) {
 }
 
 /** Question content; while it is being read, text goes karaoke and pictures appear line by line. */
-const QuestionBody = memo(function QuestionBody({ items, reading, controls }: { items: MediaView[]; reading?: Reading; controls: boolean }) {
-  return <div className="q-body"><MediaList items={items} reading={reading} controls={controls} /></div>;
+const QuestionBody = memo(function QuestionBody({ items, reading, controls, playback }: { items: MediaView[]; reading?: Reading; controls: boolean; playback: Playback }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useGrowText(ref, [items]);
+  return <div className="q-body" ref={ref}><MediaList items={items} reading={reading} controls={controls} playback={playback} /></div>;
 });
 
 /** Sends what the player types, at most a few times per second. */
@@ -378,7 +380,7 @@ export function QuestionScreen({ room }: { room: RoomView }) {
           </div>
           {q.loading ? (
             <div className="q-loading" role="status"><span className="spinner" aria-hidden="true" />{t.q.loading(q.loading.ready, q.loading.total)}</div>
-          ) : !(q.stage === "reveal" && q.answer?.content.length) && <QuestionBody items={q.content} reading={reading} controls={room.me.role === "host"} />}
+          ) : !(q.stage === "reveal" && q.answer?.content.length) && <QuestionBody items={q.content} reading={reading} controls={room.me.role === "host"} playback={q.stage === "answering" || q.stage === "judging" ? "hold" : q.stage === "reveal" ? "keep" : "play"} />}
           {q.options && q.kind !== "forAll" && q.kind !== "stakeAll" && <Options options={q.options} pick={answeringMe && !q.submitted ? (label) => send({ t: "submit", text: label }) : undefined} chosen={q.typed} />}
 
           {q.stage === "reveal" ? (

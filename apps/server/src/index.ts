@@ -390,7 +390,7 @@ export async function startServer(opts: ServerOptions = {}) {
 
   /* ---- cleanup of empty rooms ---- */
   // Rooms close when empty for 5 minutes, or when no game starts within 20 minutes.
-  const limits = { emptyMs: 5 * 60_000, lobbyMs: 20 * 60_000, sweepMs: 30_000, ...opts.roomLimits };
+  const limits = { emptyMs: 5 * 60_000, lobbyMs: 20 * 60_000, sweepMs: 10_000, ...opts.roomLimits };
   const closeRoom = (id: string, r: Room, why: string, reason?: Text) => {
     r.dispose();
     rooms.delete(id);
@@ -408,6 +408,7 @@ export async function startServer(opts: ServerOptions = {}) {
   const sweep = setInterval(() => {
     const now = Date.now();
     for (const [id, r] of rooms) {
+      r.sweepOffline(now);
       if (r.phase === "lobby" && now - r.lobbySince > limits.lobbyMs) { closeRoom(id, r, "игру не начали", text("left.expiredLobby")); continue; }
       if (r.onlineMembers().length) { r.emptySince = 0; continue; }
       if (!r.emptySince) r.emptySince = now;

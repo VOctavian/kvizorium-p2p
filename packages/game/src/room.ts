@@ -132,10 +132,13 @@ function decode(v: unknown): unknown {
 const SAVED_FIELDS = [
   "name", "password", "settings", "ownerId", "hostId", "players", "viewers", "members", "phase", "paused", "roundIdx",
   "played", "chooserId", "roundEndsAt", "stake", "secret", "final", "hostLine", "chat", "emptySince", "createdAt", "voiceUrl",
-  "startedAt", "packAlias", "chatSeq", "banned", "finalsPlayed", "packRevealed", "statsEntry", "lobbySince", "stakeAllParticipants",
+  "startedAt", "packAlias", "chatSeq", "banned", "finalsPlayed", "packRevealed", "statsEntry", "lobbySince", "stakeAllParticipants", "leaving",
 ] as const;
 /** Extra seconds on a countdown after a restart, so people have time to reconnect. */
 const RESTORE_GRACE = 5;
+/** A player offline this long gives up their seat (see sweepOffline). */
+export const OFFLINE_LOBBY_MS = 30_000;
+export const OFFLINE_GAME_MS = 120_000;
 
 /** Seconds to wait for slow browsers to load a question's media. */
 const LOAD_WAIT = 8;
@@ -262,12 +265,61 @@ export class Room {
 
   leave(user: User, kicked = false) {
     this.dropHave(user.id);
-    if (this.phase === "lobby") this.players = this.players.filter((p) => p.id !== user.id);
+    this.standUp(user.id);
     this.viewers.delete(user.id);
     this.members.delete(user.id);
     if (user.roomId === this.id) user.roomId = undefined;
     this.feed("info", kicked ? "ev.kicked" : "ev.left", { name: user.name });
     this.changed();
+  }
+
+  /**
+   * Whoever leaves the room leaves the table too, and the seat stays free. A player in the middle
+   * of something (answering, a stake) stands up as soon as it's over.
+   */
+  private standUp(id: string) {
+    if (!this.isPlayer(id)) return;
+    if (this.phase !== "lobby" && this.busyWith(id)) { this.leaving.add(id); return; }
+    this.leaving.delete(id);
+    this.players = this.players.filter((p) => p.id !== id);
+    if (this.chooserId === id) this.chooserId = this.players[0]?.id;
+  }
+  /** Players who left while busy, waiting to stand up. */
+  private leaving = new Set<string>();
+  /** When each member was first seen offline. */
+  private offSince = new Map<string, number>();
+
+  /**
+   * Called every few seconds by whoever keeps the room. Someone offline for long (a closed tab
+   * doesn't say goodbye) leaves the room, so their seat is free again: in the lobby after
+   * OFFLINE_LOBBY_MS, in a game after OFFLINE_GAME_MS. A reload or a short drop is well within that.
+   */
+  sweepOffline(now = Date.now()) {
+    let changed = false;
+    for (const id of [...this.leaving]) {
+      if (this.members.has(id) || !this.isPlayer(id)) { this.leaving.delete(id); continue; }
+      if (this.busyWith(id)) continue;
+      this.standUp(id);
+      changed = true;
+    }
+    for (const id of [...this.offSince.keys()]) if (!this.members.has(id)) this.offSince.delete(id);
+    for (const id of this.members) {
+      const u = this.hub.user(id);
+      if (u?.online) { this.offSince.delete(id); continue; }
+      const since = this.offSince.get(id);
+      if (since == null) { this.offSince.set(id, now); continue; }
+      // Only seats are freed this way: a host or a viewer who is away holds nothing up.
+      if (!this.isPlayer(id) || now - since < (this.phase === "lobby" ? OFFLINE_LOBBY_MS : OFFLINE_GAME_MS)) continue;
+      if (this.phase !== "lobby" && this.busyWith(id)) continue;
+      this.offSince.delete(id);
+      this.dropHave(id);
+      this.standUp(id);
+      this.members.delete(id);
+      if (u && u.roomId === this.id) u.roomId = undefined;
+      this.feed("info", "ev.left", { name: this.name_(id) });
+      changed = true;
+    }
+    if (changed) this.changed();
   }
 
   /** Someone's connection dropped or came back; a dropped browser no longer shares files. */
@@ -759,7 +811,7 @@ export class Room {
       else if (it.type === "image") t += Math.max(2.5, this.settings.imageReveal);
       else if (it.type === "audio" || it.type === "video") t += it.duration ?? 8;
     }
-    return clamp(t + 0.4, 2, 60);
+    return clamp(t + 0.4, 2, 150);
   }
 
   private beginQuestion() {

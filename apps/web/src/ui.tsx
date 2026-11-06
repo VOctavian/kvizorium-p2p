@@ -136,20 +136,46 @@ function keepAspect(e: React.SyntheticEvent<HTMLImageElement | HTMLVideoElement>
   if (w > 0 && h > 0) el.style.setProperty("--ar", String(w / h));
 }
 
+/**
+ * What a playing clip does: plays, pauses while a player answers ("hold"), or stays as it is
+ * ("keep": paused stays paused, e.g. when the answer is shown).
+ */
+export type Playback = "play" | "hold" | "keep";
+
 /** Plays as soon as it appears. Players get no controls; if the browser blocks sound, they can only switch it on. */
-function AutoMedia({ kind, src, controls }: { kind: "audio" | "video"; src: string; controls: boolean }) {
+function AutoMedia({ kind, src, controls, playback = "play" }: { kind: "audio" | "video"; src: string; controls: boolean; playback?: Playback }) {
   const ref = useRef<HTMLMediaElement>(null);
   const [blocked, setBlocked] = useState(false);
+  /** Paused by us for an answer: plays on when the answer is over. */
+  const held = useRef(false);
+  const mode = useRef(playback);
+  mode.current = playback;
   const t = useT();
+  const start = (el: HTMLMediaElement) => {
+    el.play().catch((e: Error) => {
+      // Paused on purpose before it got going: not a blocked autoplay.
+      if (e?.name === "AbortError") return;
+      if (kind === "video") { el.muted = true; el.play().catch(() => {}); }
+      setBlocked(true);
+    });
+  };
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     el.volume = getPrefs().volume;
-    el.play().catch(() => {
-      if (kind === "video") { el.muted = true; el.play().catch(() => {}); }
-      setBlocked(true);
-    });
+    if (mode.current === "play") start(el);
+    else held.current = true;
   }, [src, kind]);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (playback === "hold") {
+      if (!el.paused && !el.ended) { el.pause(); held.current = true; }
+    } else if (playback === "play" && held.current) {
+      held.current = false;
+      if (!el.ended) start(el);
+    }
+  }, [playback]);
   const unlock = () => {
     const el = ref.current;
     if (!el) return;
@@ -172,7 +198,7 @@ function AutoMedia({ kind, src, controls }: { kind: "audio" | "video"; src: stri
  * Question content. `reading` turns on karaoke text and line-by-line pictures for the reading phase;
  * `controls` (host only) shows media controls.
  */
-export function MediaList({ items, big = true, reading, controls = false }: { items: MediaView[]; big?: boolean; reading?: Reading; controls?: boolean }) {
+export function MediaList({ items, big = true, reading, controls = false, playback }: { items: MediaView[]; big?: boolean; reading?: Reading; controls?: boolean; playback?: Playback }) {
   const t = useT();
   // Next to a picture or video, text is a one-line caption so the media get the room.
   const caption = big && items.some((m) => m.type === "image" || m.type === "video");
@@ -198,8 +224,8 @@ export function MediaList({ items, big = true, reading, controls = false }: { it
           }
           case "say": return <p key={key} className="q-say">{t.media.host} {reading?.karaoke ? <Karaoke text={m.text ?? ""} start={start} speed={reading.speed} /> : m.text}</p>;
           case "image": return <div key={key} className="q-media visual"><WithSrc m={m}>{(src) => reading && reading.imageReveal > 0 ? <RevealImage src={src} start={start} seconds={reading.imageReveal} /> : <img src={src} alt={t.media.image} onLoad={keepAspect} />}</WithSrc></div>;
-          case "video": return <div key={key} className="q-media visual"><WithSrc m={m}>{(src) => <AutoMedia kind="video" src={src} controls={controls} />}</WithSrc></div>;
-          case "audio": return <div key={key} className="q-media audio"><WithSrc m={m}>{(src) => <AutoMedia kind="audio" src={src} controls={controls} />}</WithSrc></div>;
+          case "video": return <div key={key} className="q-media visual"><WithSrc m={m}>{(src) => <AutoMedia kind="video" src={src} controls={controls} playback={playback} />}</WithSrc></div>;
+          case "audio": return <div key={key} className="q-media audio"><WithSrc m={m}>{(src) => <AutoMedia kind="audio" src={src} controls={controls} playback={playback} />}</WithSrc></div>;
           case "html": return <p key={key}><WithSrc m={m}>{(src) => <a href={src} target="_blank" rel="noreferrer">{t.media.html}</a>}</WithSrc></p>;
         }
   }
@@ -287,6 +313,50 @@ export function preloadMedia(items: MediaView[], ms = 7000): Promise<void> {
 }
 
 /* ---------- auto-fitting text ---------- */
+
+/**
+ * A question with no picture or video: its text grows to fill the box (never past `max` px,
+ * never below its CSS size). Only on big screens, where the box has a fixed height.
+ */
+export function useGrowText(ref: React.RefObject<HTMLElement | null>, deps: unknown[], max = 96) {
+  useLayoutEffect(() => {
+    const box = ref.current;
+    if (!box) return;
+    const big = matchMedia("(min-width: 900px) and (min-height: 560px)");
+    let busy = false;
+    const fit = () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const texts = [...box.querySelectorAll<HTMLElement>(".q-text:not(.one-line)")];
+        for (const el of texts) el.style.fontSize = "";
+        if (!texts.length || !big.matches || box.querySelector(".q-media.visual, .media-row")) return;
+        const base = parseFloat(getComputedStyle(texts[0]).fontSize) || 20;
+        const set = (px: number) => { for (const el of texts) el.style.fontSize = `${px}px`; };
+        const fits = () => box.scrollHeight <= box.clientHeight + 1 && texts.every((el) => el.scrollWidth <= el.clientWidth + 1);
+        if (!fits()) { for (const el of texts) el.style.fontSize = ""; return; }
+        let lo = base, hi = Math.max(base, max);
+        set(hi);
+        if (fits()) return;
+        for (let i = 0; i < 10 && hi - lo > 0.5; i++) {
+          const mid = (lo + hi) / 2;
+          set(mid);
+          if (fits()) lo = mid; else hi = mid;
+        }
+        set(Math.floor(lo));
+      } finally { busy = false; }
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(box);
+    // Lines that appear later (while the question is read) and pictures that arrive change the room left.
+    const mo = new MutationObserver(fit);
+    mo.observe(box, { childList: true, subtree: true });
+    big.addEventListener("change", fit);
+    return () => { ro.disconnect(); mo.disconnect(); big.removeEventListener("change", fit); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+}
 
 /**
  * Always one line: the font shrinks (down to 60 % of the CSS size) until the text fits;

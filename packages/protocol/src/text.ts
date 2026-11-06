@@ -214,6 +214,8 @@ const ru = {
   "err.shareNotReady": () => "Пак ещё раздаётся: первый раунд есть не у всех",
   "ev.takeover": () => "Комнату теперь держит другой участник — игра продолжается с того же места",
   "err.roomLost": () => "Комната не нашлась: в ней сейчас никого нет",
+  "err.noRoute": () => "Комната есть, но связаться с её участниками не вышло: похоже, ваша сеть не пускает прямые соединения между браузерами. Попробуйте другую сеть (например, мобильный интернет) или выключите VPN",
+  "ev.joiningRoom": (p) => `Ищу комнату ${p.code}…`,
   "err.badShare": () => "Пак не удалось принять: список файлов повреждён",
 } satisfies Record<string, Fmt>;
 
@@ -401,6 +403,8 @@ const en: Record<TextKey, Fmt> = {
   "err.shareNotReady": () => "The pack is still spreading: not everyone has the first round",
   "ev.takeover": () => "Another member now keeps the room — the game goes on from where it was",
   "err.roomLost": () => "The room wasn't found: nobody is in it now",
+  "err.noRoute": () => "The room exists, but its members couldn't be reached: your network seems to block direct connections between browsers. Try another network (e.g. mobile data) or turn off your VPN",
+  "ev.joiningRoom": (p) => `Looking for room ${p.code}…`,
   "err.badShare": () => "The pack couldn't be taken: its file list is broken",
 };
 
