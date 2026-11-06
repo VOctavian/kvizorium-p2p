@@ -1,0 +1,20 @@
+[Unit]
+Description=Kvizorium game server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=kvz
+WorkingDirectory=/opt/kvizorium
+# Listens only on this machine: Caddy in front of it does HTTPS.
+Environment=PORT=8787 HOST=127.0.0.1 KVZ_DATA=/var/lib/kvizorium KVZ_TRUST_PROXY=1 NODE_ENV=production
+ExecStart=/usr/bin/node apps/server/dist/server.cjs
+StateDirectory=kvizorium
+Restart=always
+RestartSec=2
+# On stop the server saves rooms and players first.
+TimeoutStopSec=20
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

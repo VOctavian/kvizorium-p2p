@@ -1,0 +1,17 @@
+{
+  "name": "@kvz/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "tsx watch --clear-screen=false src/main.ts --port 8787",
+    "build": "esbuild src/main.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/server.cjs --define:import.meta.dirname=__dirname --external:bufferutil --external:utf-8-validate && esbuild src/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/index.cjs --define:import.meta.dirname=__dirname --external:bufferutil --external:utf-8-validate"
+  },
+  "dependencies": {
+    "@kvz/game": "*",
+    "@kvz/protocol": "*",
+    "@kvz/siq": "*",
+    "ws": "^8.22.1"
+  }
+}

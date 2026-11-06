@@ -1,0 +1,1016 @@
+<title>Квизориум Аврора</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;800&family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+/* Layout: glass stage over an aurora sky. Main column (HUD, screen, player row) + right column (host slot, chat with game feed). On big monitors the stage fills the whole viewport and everything scales up. Single deliberate dark look. */
+:root {
+  color-scheme: dark;
+  --night: #070b1f;
+  --night-2: #0f1638;
+  --glass: rgba(255, 255, 255, 0.07);
+  --glass-2: rgba(255, 255, 255, 0.12);
+  --glass-3: rgba(255, 255, 255, 0.2);
+  --line: rgba(255, 255, 255, 0.16);
+  --line-2: rgba(255, 255, 255, 0.32);
+  --text: #eef1ff;
+  --text-dim: #a7b1d8;
+  --text-faint: #6f7aa6;
+  --mint: #43f0c4;
+  --violet: #8a7bff;
+  --rose: #ff74b3;
+  --amber: #ffd27a;
+  --silver: #dfe5ff;
+  --good: #43f0c4;
+  --bad: #ff6f8e;
+  --font-display: "Unbounded", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Manrope", "Segoe UI", system-ui, sans-serif;
+  --font-num: "JetBrains Mono", ui-monospace, "Cascadia Mono", monospace;
+  --r-lg: 22px;
+  --r-md: 14px;
+  --r-sm: 10px;
+  --blur: blur(18px) saturate(140%);
+  --pod-w: clamp(116px, min(9vw, 15vh), 200px);
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { min-height: 100%; }
+body {
+  margin: 0;
+  background: var(--night);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 16px 24px;
+  overflow-x: hidden;
+}
+.sky { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; background: radial-gradient(120% 80% at 50% 110%, var(--night-2), var(--night) 60%); }
+.sky i { position: absolute; width: 60vmax; height: 60vmax; border-radius: 50%; filter: blur(90px); opacity: .55; mix-blend-mode: screen; animation: drift 26s ease-in-out infinite alternate; }
+.sky i:nth-child(1) { background: var(--mint); left: -15vmax; top: -25vmax; opacity: .35; }
+.sky i:nth-child(2) { background: var(--violet); right: -20vmax; top: -10vmax; animation-duration: 32s; }
+.sky i:nth-child(3) { background: var(--rose); left: 20vmax; bottom: -35vmax; opacity: .3; animation-duration: 38s; }
+@keyframes drift { to { transform: translate(8vmax, 6vmax) scale(1.15); } }
+
+.shell { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 12px; margin: 0 auto; }
+.topnav { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+.group { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.group .label { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--text-faint); margin-right: 4px; }
+.tab { font: 600 13px var(--font-body); color: var(--text-dim); background: var(--glass); border: 1px solid var(--line); border-radius: 999px; padding: 6px 13px; cursor: pointer; backdrop-filter: var(--blur); transition: background .2s, color .2s, border-color .2s; }
+.tab:hover { color: var(--text); border-color: var(--line-2); }
+.tab[aria-selected="true"], .tab[aria-pressed="true"] { color: var(--night); background: var(--text); border-color: var(--text); }
+.topnav .fs { margin-left: auto; }
+
+.stage { display: grid; grid-template-columns: minmax(0, 1fr) clamp(290px, 22vw, 420px); gap: 16px; background: linear-gradient(160deg, rgba(255,255,255,.09), rgba(255,255,255,.03)); border: 1px solid var(--line); border-radius: 28px; backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); box-shadow: 0 30px 80px -30px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.12); padding: 18px; min-width: 0; }
+.stage[data-screen="games"] { grid-template-columns: minmax(0, 1fr); }
+.stage[data-screen="games"] .room-only { display: none !important; }
+.stage:not([data-screen="games"]) .games-only { display: none !important; }
+.main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.area { display: flex; flex-direction: column; min-width: 0; }
+.side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+.hud { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
+.logo { font: 800 clamp(16px, 1.1vw, 22px) var(--font-display); letter-spacing: -.01em; display: flex; align-items: center; gap: 10px; margin-right: auto; }
+.logo .mark { width: 30px; height: 30px; border-radius: 9px; background: conic-gradient(from 200deg, var(--mint), var(--violet), var(--rose), var(--mint)); box-shadow: 0 0 24px -4px var(--violet); }
+.chip { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); background: var(--glass); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; white-space: nowrap; }
+.chip b { color: var(--text); font-weight: 600; }
+.chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 10px var(--mint); }
+.code { font-family: var(--font-num); letter-spacing: .08em; color: var(--text); }
+
+.screen { min-height: 340px; min-width: 0; }
+@media (prefers-reduced-motion: no-preference) {
+  .screen { animation: rise .45s cubic-bezier(.2,.7,.2,1); }
+}
+@keyframes rise { from { opacity: 0; transform: translateY(10px) scale(.99); } }
+
+.panel { background: var(--glass); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 18px; min-width: 0; }
+.eyebrow { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--text-faint); margin: 0 0 8px; }
+h2 { font: 600 clamp(18px, 1.3vw, 26px) var(--font-display); margin: 0; text-wrap: balance; }
+
+.btn { font: 700 14px var(--font-body); color: var(--text); background: var(--glass-2); border: 1px solid var(--line-2); border-radius: var(--r-md); padding: 11px 18px; cursor: pointer; transition: transform .15s, background .2s, box-shadow .2s; white-space: nowrap; }
+.btn:hover { background: var(--glass-3); }
+.btn:active { transform: scale(.97); }
+.btn:focus-visible, .tab:focus-visible, .card:focus-visible, .buzzer:focus-visible, .room:focus-visible, .search:focus-visible, .chat-input input:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
+.btn.primary { color: #05211a; background: linear-gradient(135deg, var(--mint), #9bffe3); border-color: transparent; box-shadow: 0 10px 30px -10px var(--mint); }
+.btn.good { color: #05211a; background: var(--good); border-color: transparent; }
+.btn.bad { color: #2b0612; background: var(--bad); border-color: transparent; }
+.btn.ghost { background: transparent; }
+.btn.sm { padding: 8px 14px; font-size: 13px; }
+
+.seg { display: inline-flex; background: rgba(0,0,0,.25); border: 1px solid var(--line); border-radius: 10px; padding: 3px; }
+.seg button { font: 600 12px var(--font-body); color: var(--text-dim); background: none; border: 0; border-radius: 7px; padding: 6px 10px; cursor: pointer; white-space: nowrap; }
+.seg button[aria-pressed="true"] { background: var(--glass-3); color: var(--text); }
+
+img.avatar { flex: none; width: 38px; height: 38px; border-radius: 50%; object-fit: cover; background: var(--glass-2); }
+.av-stack { display: flex; }
+.av-stack .avatar { width: 30px; height: 30px; border: 2px solid var(--night-2); margin-left: -8px; }
+.av-stack .avatar:first-child { margin-left: 0; }
+
+/* Games list */
+.games { display: grid; grid-template-columns: minmax(0, 1fr) clamp(300px, 24vw, 420px); gap: 16px; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+.search { flex: 1 1 220px; min-width: 0; font: 500 14px var(--font-body); color: var(--text); background: rgba(0,0,0,.25); border: 1px solid var(--line); border-radius: var(--r-md); padding: 10px 14px; }
+.search::placeholder { color: var(--text-faint); }
+.room-list { display: grid; gap: 8px; }
+.room { display: grid; grid-template-columns: 46px minmax(0, 1fr) auto auto 22px; align-items: center; gap: 14px; padding: 10px 14px; border-radius: var(--r-md); background: rgba(255,255,255,.04); border: 1px solid var(--line); cursor: pointer; text-align: left; color: inherit; font: inherit; width: 100%; transition: background .2s, border-color .2s; }
+.room:hover { background: rgba(255,255,255,.08); }
+.room[aria-selected="true"] { border-color: rgba(67,240,196,.6); background: rgba(67,240,196,.07); }
+.cover { width: 46px; height: 46px; border-radius: 12px; display: grid; place-items: center; font: 800 14px var(--font-display); color: rgba(255,255,255,.95); box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }
+.room .info { min-width: 0; }
+.room .info b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.room .info span { display: block; font-size: 13px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.seats { font: 700 14px var(--font-num); color: var(--text); white-space: nowrap; }
+.seats small { color: var(--text-faint); font-weight: 500; }
+.pill { font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
+.pill.wait { color: #05211a; background: var(--mint); }
+.pill.play { color: var(--text); background: rgba(138,123,255,.25); border: 1px solid rgba(138,123,255,.5); }
+.pill.full { color: var(--text-dim); background: rgba(255,255,255,.08); }
+.lock { width: 18px; height: 18px; color: var(--amber); }
+.empty-list { padding: 30px; text-align: center; color: var(--text-dim); border: 1.5px dashed var(--line); border-radius: var(--r-md); }
+.detail { display: flex; flex-direction: column; gap: 14px; }
+.detail .big-cover { aspect-ratio: 16 / 9; border-radius: 16px; display: grid; place-items: center; font: 800 34px var(--font-display); color: rgba(255,255,255,.95); box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }
+.detail p { margin: 0; color: var(--text-dim); font-size: 14px; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 14px; margin: 0; }
+.kv dt { color: var(--text-faint); }
+.kv dd { margin: 0; text-align: right; }
+.detail .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+/* Lobby */
+.lobby { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 16px; }
+.pack { display: flex; gap: 16px; align-items: center; }
+.pack-cover { flex: none; width: 96px; height: 96px; border-radius: 18px; background: radial-gradient(circle at 30% 30%, var(--rose), transparent 60%), radial-gradient(circle at 70% 70%, var(--mint), transparent 55%), var(--violet); display: grid; place-items: center; font: 800 26px var(--font-display); color: rgba(255,255,255,.92); box-shadow: inset 0 0 0 1px rgba(255,255,255,.3); }
+.pack-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.tag { font-size: 12px; color: var(--text-dim); background: rgba(255,255,255,.06); border: 1px solid var(--line); border-radius: 8px; padding: 3px 8px; }
+.tag.mint { color: var(--mint); border-color: rgba(67,240,196,.4); }
+.drop { margin-top: 14px; border: 1.5px dashed var(--line-2); border-radius: var(--r-md); padding: 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; color: var(--text-dim); font-size: 13px; cursor: pointer; }
+.drop input, .av-pick input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.settings { display: grid; gap: 10px; margin-top: 16px; }
+.setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: var(--r-sm); background: rgba(255,255,255,.04); flex-wrap: wrap; }
+.setting span { color: var(--text-dim); font-size: 14px; }
+.slots { display: grid; gap: 8px; margin-top: 12px; }
+.slot { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: var(--r-md); background: rgba(255,255,255,.05); border: 1px solid var(--line); }
+.slot.empty { border-style: dashed; color: var(--text-faint); background: transparent; }
+.slot .ready { margin-left: auto; font-size: 12px; color: var(--mint); }
+.slot .wait { margin-left: auto; font-size: 12px; color: var(--text-faint); }
+.av-pick { font-size: 12px; color: var(--text-dim); border: 1px solid var(--line); border-radius: 8px; padding: 3px 8px; cursor: pointer; }
+.av-pick:hover { color: var(--text); border-color: var(--line-2); }
+.lobby-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+.lobby-actions .primary { flex: 1; }
+
+/* Board: categories on the left, prices in a row */
+.board-wrap { overflow-x: auto; padding: 4px 2px; }
+.board { display: grid; grid-template-columns: minmax(150px, 1.5fr) repeat(5, minmax(84px, 1fr)); grid-auto-rows: minmax(62px, 1fr); gap: clamp(8px, .7vw, 14px); min-width: 600px; }
+.theme { font: 600 clamp(13px, 1vw, 22px) var(--font-display); padding: 0 16px; border-radius: var(--r-md); background: rgba(255,255,255,.06); border: 1px solid var(--line); display: flex; align-items: center; gap: 10px; text-wrap: balance; }
+.theme::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 10px var(--mint); }
+.theme.done { color: var(--text-faint); }
+.theme.done::before { background: var(--text-faint); box-shadow: none; }
+.card { position: relative; perspective: 900px; border: 0; padding: 0; background: none; cursor: pointer; border-radius: var(--r-md); min-height: 62px; }
+.card-inner { position: absolute; inset: 0; transform-style: preserve-3d; transition: transform .65s cubic-bezier(.3,.7,.2,1); }
+.card.flipped .card-inner { transform: rotateY(180deg) scale(1.06); }
+.face { position: absolute; inset: 0; border-radius: var(--r-md); backface-visibility: hidden; -webkit-backface-visibility: hidden; display: grid; place-items: center; border: 1px solid var(--line-2); }
+.front { background: linear-gradient(150deg, rgba(255,255,255,.16), rgba(255,255,255,.04)); box-shadow: inset 0 1px 0 rgba(255,255,255,.25); font: 700 clamp(20px, 1.4vw + .8vh, 46px) var(--font-num); color: var(--text); transition: background .2s, box-shadow .2s; }
+.card:hover .front { background: linear-gradient(150deg, rgba(255,255,255,.26), rgba(255,255,255,.08)); box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 0 0 1px rgba(67,240,196,.5), 0 12px 30px -12px var(--mint); }
+.back { transform: rotateY(180deg); background: conic-gradient(from 120deg at 50% 50%, var(--violet), var(--mint), var(--rose), var(--violet)); color: #0b0f26; font: 800 11px var(--font-display); letter-spacing: .1em; text-transform: uppercase; }
+.card.played { cursor: default; pointer-events: none; }
+.card.played .front { background: rgba(255,255,255,.025); border-color: rgba(255,255,255,.06); color: transparent; box-shadow: none; }
+.board-foot { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-top: 12px; color: var(--text-dim); font-size: 14px; }
+.board-foot b { color: var(--text); }
+
+/* Question */
+.question { display: grid; grid-template-columns: minmax(0, 1fr) clamp(230px, 16vw, 300px); gap: 16px; }
+.q-card { position: relative; display: flex; flex-direction: column; gap: 18px; padding: clamp(18px, 1.8vw, 40px); border-radius: var(--r-lg); background: linear-gradient(160deg, rgba(255,255,255,.14), rgba(255,255,255,.04)); border: 1px solid var(--line-2); box-shadow: inset 0 1px 0 rgba(255,255,255,.2); min-height: 330px; transition: border-color .3s, box-shadow .3s; }
+.q-card.is-answer { border-color: rgba(255,116,179,.7); box-shadow: inset 0 1px 0 rgba(255,255,255,.2), 0 0 0 1px rgba(255,116,179,.4), 0 0 80px -30px var(--rose); }
+@media (prefers-reduced-motion: no-preference) {
+  .q-card.enter { animation: flipin .6s cubic-bezier(.3,.7,.2,1); }
+}
+@keyframes flipin { from { transform: perspective(1200px) rotateY(-70deg) scale(.85); opacity: 0; } }
+.q-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.q-price { font: 700 clamp(20px, 1.5vw, 32px) var(--font-num); color: var(--mint); }
+.q-type { font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #2b0d1d; background: var(--amber); padding: 4px 10px; border-radius: 999px; }
+.q-text { font: 600 clamp(20px, 1.6vw + 1vh, 48px)/1.3 var(--font-display); margin: 0; text-wrap: balance; flex: 1; display: flex; align-items: center; }
+.q-media { border-radius: var(--r-md); border: 1px solid var(--line); background: radial-gradient(circle at 50% 120%, rgba(255,120,80,.35), transparent 60%), #0c1030; height: clamp(140px, 22vh, 320px); display: grid; place-items: center; position: relative; overflow: hidden; }
+.q-media .planet { height: 78%; aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #ffb38a, #c4552d 55%, #5e1c0f); box-shadow: 0 0 40px -6px #ff7a4d; }
+.q-media small { position: absolute; left: 10px; bottom: 8px; font-size: 11px; color: var(--text-faint); }
+.timer { display: grid; gap: 6px; }
+.timer-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-dim); }
+.timer-row b { font-family: var(--font-num); color: var(--text); }
+.bar { height: 8px; border-radius: 999px; background: rgba(255,255,255,.08); overflow: hidden; }
+.bar i { display: block; height: 100%; width: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--violet), var(--mint)); transform-origin: left; }
+.bar.answer i { background: linear-gradient(90deg, var(--rose), var(--amber)); }
+@keyframes drain { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+.buzzer { width: 100%; display: flex; align-items: center; justify-content: center; gap: 14px; font: 800 clamp(16px, 1.2vw, 24px) var(--font-display); letter-spacing: .02em; color: #071e18; padding: clamp(16px, 1.4vw, 26px); border: 0; border-radius: var(--r-md); cursor: pointer; background: linear-gradient(135deg, var(--mint), #a7ffe8); box-shadow: 0 16px 40px -14px var(--mint); transition: transform .12s, filter .2s; }
+.buzzer:active { transform: scale(.98); }
+.buzzer kbd { font: 700 12px var(--font-num); padding: 3px 8px; border-radius: 6px; background: rgba(7,30,24,.15); border: 1px solid rgba(7,30,24,.25); }
+.buzzer[aria-disabled="true"] { filter: grayscale(.8) brightness(.7); cursor: default; box-shadow: none; }
+.answer-banner { display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-radius: var(--r-md); background: linear-gradient(135deg, var(--rose), #ff9fcb); color: #2b0612; box-shadow: 0 16px 40px -12px var(--rose); }
+.answer-banner img { width: 52px; height: 52px; border-radius: 12px; object-fit: cover; box-shadow: 0 0 0 3px rgba(43,6,18,.35); }
+.answer-banner small { display: block; font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; opacity: .75; }
+.answer-banner b { font: 800 22px var(--font-display); }
+.answer-banner .sec { margin-left: auto; font: 700 26px var(--font-num); }
+@media (prefers-reduced-motion: no-preference) {
+  .answer-banner { animation: bannerin .35s cubic-bezier(.2,.9,.3,1.3); }
+}
+@keyframes bannerin { from { transform: scale(.9); opacity: 0; } }
+.status { text-align: center; font-size: 14px; color: var(--text-dim); min-height: 21px; }
+.status b { color: var(--text); }
+.host-panel { display: flex; flex-direction: column; gap: 12px; }
+.host-panel .answer { padding: 12px; border-radius: var(--r-sm); background: rgba(67,240,196,.08); border: 1px solid rgba(67,240,196,.3); }
+.host-panel .answer p { margin: 0; font-weight: 700; font-size: 16px; }
+.host-panel .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.note { font-size: 12px; color: var(--text-faint); margin: 0; }
+
+/* Auction */
+.auction { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.stake-big { font: 800 clamp(44px, 5vw, 96px)/1 var(--font-num); color: var(--amber); margin: 10px 0 4px; }
+.bids { display: grid; gap: 8px; margin-top: 12px; }
+.bid { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: var(--r-md); background: rgba(255,255,255,.05); border: 1px solid var(--line); }
+.bid .val { margin-left: auto; font: 700 15px var(--font-num); }
+.bid.lead { border-color: rgba(255,210,122,.6); background: rgba(255,210,122,.08); }
+.bid.pass { opacity: .5; }
+.stake-ctrl { display: grid; gap: 12px; align-content: start; }
+.stake-ctrl input[type=range] { width: 100%; accent-color: var(--amber); }
+.stake-ctrl .row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.stake-val { font: 700 28px var(--font-num); }
+
+/* Results */
+.results { display: grid; gap: 22px; justify-items: center; align-content: center; padding: 10px 0; }
+.ranks { display: flex; align-items: flex-end; justify-content: center; gap: 14px; width: 100%; flex-wrap: wrap; }
+.rank { width: min(220px, 30%); min-width: 110px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.rank img.avatar { width: 64px; height: 64px; border-radius: 18px; }
+.rank .stand { width: 100%; border-radius: 16px 16px 6px 6px; border: 1px solid var(--line-2); background: linear-gradient(180deg, rgba(255,255,255,.18), rgba(255,255,255,.03)); display: flex; flex-direction: column; align-items: center; padding-top: 14px; gap: 2px; }
+.rank .place { font: 800 30px var(--font-display); }
+.rank .pts { font: 700 15px var(--font-num); color: var(--text-dim); }
+.rank:nth-child(1) .stand { height: 130px; }
+.rank:nth-child(2) .stand { height: 180px; border-color: rgba(67,240,196,.6); box-shadow: 0 0 50px -16px var(--mint); }
+.rank:nth-child(2) .place { color: var(--mint); }
+.rank:nth-child(3) .stand { height: 100px; }
+
+/* Player row */
+.podiums { display: grid; grid-auto-flow: column; grid-auto-columns: var(--pod-w); justify-content: center; align-items: end; gap: 12px; overflow-x: auto; padding: 34px 8px 6px; }
+.podium { position: relative; display: flex; flex-direction: column; gap: 8px; padding: 10px 10px 16px; border-radius: 20px; background: linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.03)); border: 1px solid var(--line); text-align: center; transition: transform .35s cubic-bezier(.2,.8,.2,1.2), opacity .3s, filter .3s, border-color .3s, box-shadow .3s, background .3s; }
+.podium .pic { position: relative; aspect-ratio: 1; border-radius: 14px; overflow: hidden; background: var(--glass-2); }
+.podium .pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.podium .gif { position: absolute; right: 6px; bottom: 6px; font: 700 10px var(--font-num); letter-spacing: .06em; padding: 1px 5px; border-radius: 5px; background: rgba(7,11,31,.7); color: var(--text); }
+.podium .name { font-weight: 700; font-size: clamp(14px, .9vw, 18px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.podium .score { font: 700 clamp(18px, 1.3vw, 30px)/1 var(--font-num); font-variant-numeric: tabular-nums; }
+.podium .score.neg { color: var(--bad); }
+.podium .state { font-size: 12px; color: var(--text-faint); min-height: 18px; }
+.podium .flag { position: absolute; left: 50%; top: -13px; transform: translateX(-50%); font: 800 11px var(--font-display); letter-spacing: .12em; text-transform: uppercase; color: #2b0612; background: var(--rose); padding: 4px 10px; border-radius: 999px; white-space: nowrap; box-shadow: 0 6px 20px -6px var(--rose); display: none; z-index: 2; }
+.podium .pbar { position: absolute; left: 10px; right: 10px; bottom: 6px; height: 5px; border-radius: 999px; background: rgba(255,255,255,.1); overflow: hidden; display: none; }
+.podium .pbar i { display: block; height: 100%; background: linear-gradient(90deg, var(--rose), var(--amber)); transform-origin: left; }
+.podium.choosing { border-color: rgba(138,123,255,.75); box-shadow: 0 0 0 1px rgba(138,123,255,.45), 0 14px 40px -18px var(--violet); }
+.podium.choosing .state { color: var(--violet); }
+.podiums.dim .podium:not(.answering):not(.host-card) { opacity: .38; filter: grayscale(.7); transform: scale(.94); }
+.podium.answering { z-index: 1; transform: translateY(-12px) scale(1.08); border-color: var(--rose); background: linear-gradient(180deg, rgba(255,116,179,.4), rgba(255,116,179,.1)); box-shadow: 0 0 0 2px var(--rose), 0 0 70px -8px var(--rose), 0 30px 50px -24px rgba(255,116,179,.8); }
+.podium.answering .flag, .podium.answering .pbar { display: block; }
+.podium.answering .pic { box-shadow: 0 0 0 3px var(--rose); }
+.podium.answering .state { color: var(--text); font-weight: 700; }
+@media (prefers-reduced-motion: no-preference) {
+  .podium.answering .flag { animation: pulse 1.1s ease-in-out infinite; }
+  .podium.answering .pic { animation: ring 1.1s ease-in-out infinite; }
+}
+@keyframes pulse { 50% { transform: translateX(-50%) scale(1.08); } }
+@keyframes ring { 50% { box-shadow: 0 0 0 5px rgba(255,116,179,.55); } }
+.podium.flash-good { box-shadow: 0 0 0 2px var(--good), 0 0 60px -8px var(--good); }
+.podium.flash-bad { box-shadow: 0 0 0 2px var(--bad), 0 0 60px -8px var(--bad); }
+.you-tag { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--mint); border: 1px solid rgba(67,240,196,.4); border-radius: 6px; padding: 1px 5px; margin-left: 6px; vertical-align: 2px; }
+
+/* Host: shared pieces */
+.say { position: relative; font-size: 14px; line-height: 1.4; color: var(--night); background: var(--silver); border-radius: 14px; padding: 10px 14px; font-weight: 600; }
+.mic { position: absolute; left: 6px; top: 6px; width: 22px; height: 22px; border-radius: 50%; background: rgba(7,11,31,.7); display: grid; place-items: center; color: var(--silver); }
+.mic svg { width: 13px; height: 13px; }
+.role { font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--silver); }
+/* Variant A/D: host card in the player row */
+.podium.host-card { border: 1px solid rgba(223,229,255,.7); background: linear-gradient(180deg, rgba(223,229,255,.22), rgba(223,229,255,.04)); box-shadow: 0 0 0 1px rgba(223,229,255,.25), 0 20px 50px -24px var(--silver); }
+.podium.host-card .tagtop { position: absolute; left: 50%; top: -13px; transform: translateX(-50%); font: 800 11px var(--font-display); letter-spacing: .12em; text-transform: uppercase; color: var(--night); background: var(--silver); padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
+.podium.host-card .say { font-size: 12px; padding: 6px 8px; border-radius: 10px; text-align: left; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.divider { width: 1px; align-self: stretch; background: linear-gradient(180deg, transparent, var(--line-2), transparent); justify-self: center; }
+.podiums.with-divider { grid-template-columns: var(--pod-w) 1px; grid-auto-columns: var(--pod-w); }
+.stage[data-host="center"] .podium.host-card { transform: translateY(-10px) scale(1.1); margin: 0 10px; z-index: 1; }
+/* Variant B: strip above the screen */
+.host-strip { display: flex; align-items: center; gap: 14px; padding: 10px 14px; border-radius: var(--r-lg); background: linear-gradient(90deg, rgba(223,229,255,.16), rgba(223,229,255,.03)); border: 1px solid rgba(223,229,255,.4); }
+.host-strip img { width: clamp(48px, 3.4vw, 72px); height: clamp(48px, 3.4vw, 72px); border-radius: 14px; object-fit: cover; box-shadow: 0 0 0 2px var(--silver); }
+.host-strip .who b { display: block; font: 700 16px var(--font-display); }
+.host-strip .say { flex: 1; font-size: clamp(14px, 1vw, 20px); }
+.host-strip .say::before { content: ""; position: absolute; left: -7px; top: 50%; transform: translateY(-50%) rotate(45deg); width: 14px; height: 14px; background: var(--silver); border-radius: 2px; }
+/* Variant C: card at the top of the side column */
+.host-side { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px 14px; align-items: center; padding: 14px; border-radius: var(--r-lg); background: linear-gradient(160deg, rgba(223,229,255,.18), rgba(223,229,255,.04)); border: 1px solid rgba(223,229,255,.45); }
+.host-side .pic { position: relative; width: clamp(64px, 5vw, 96px); aspect-ratio: 1; border-radius: 16px; overflow: hidden; box-shadow: 0 0 0 2px var(--silver); }
+.host-side .pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.host-side .who b { display: block; font: 700 18px var(--font-display); }
+.host-side .say { grid-column: 1 / -1; }
+.host-side .say::before { content: ""; position: absolute; left: 30px; top: -6px; width: 12px; height: 12px; background: var(--silver); transform: rotate(45deg); border-radius: 2px; }
+
+/* Chat with game feed */
+.chat { display: flex; flex-direction: column; gap: 10px; padding: 14px; min-height: 420px; }
+.chat-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.chat-head h2 { font-size: 15px; }
+.chat-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px; max-height: 460px; scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
+.msg { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 8px; font-size: 14px; }
+.msg img { width: 28px; height: 28px; border-radius: 9px; object-fit: cover; }
+.msg .meta { font-size: 12px; color: var(--text-faint); }
+.msg .meta b { font-weight: 700; margin-right: 6px; }
+.msg .txt { overflow-wrap: anywhere; }
+.msg.viewer .txt { color: var(--text-dim); }
+.msg.host .meta b { color: var(--silver); }
+.ev { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); padding: 6px 10px; border-radius: 10px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.06); }
+.ev::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); }
+.ev b { color: var(--text); font-weight: 700; }
+.ev time { font: 500 11px var(--font-num); color: var(--text-faint); }
+.ev.good::before { background: var(--good); box-shadow: 0 0 8px var(--good); }
+.ev.bad::before { background: var(--bad); box-shadow: 0 0 8px var(--bad); }
+.ev.pick::before { background: var(--violet); box-shadow: 0 0 8px var(--violet); }
+.ev.bid::before { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+.ev.buzz::before { background: var(--rose); box-shadow: 0 0 8px var(--rose); }
+.ev.good { border-color: rgba(67,240,196,.2); }
+.ev.bad { border-color: rgba(255,111,142,.2); }
+.chat-input { display: flex; gap: 8px; }
+.chat-input input { flex: 1; min-width: 0; font: 500 14px var(--font-body); color: var(--text); background: rgba(0,0,0,.25); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.chat-input input::placeholder { color: var(--text-faint); }
+.chat-err { font-size: 12px; color: var(--bad); min-height: 0; margin: -4px 0 0; }
+.chat .seg button { padding: 4px 8px; }
+
+/* Big screens: stage fills the viewport */
+@media (min-width: 1100px) and (min-height: 680px) {
+  body { height: 100vh; height: 100dvh; padding-block: 12px; }
+  .shell { height: 100%; }
+  .stage { flex: 1; min-height: 0; }
+  .main, .side { min-height: 0; }
+  .area { flex: 1; min-height: 0; }
+  .screen { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+  .screen > * { flex: 1; min-height: 0; }
+  #screen-board .board-wrap { flex: 1; }
+  #screen-board .board { height: 100%; }
+  #screen-board .board-foot { flex: none; }
+  .question > *, .lobby > *, .auction > * { min-height: 0; overflow: auto; }
+  .chat { flex: 1; min-height: 0; }
+  .chat-list { max-height: none; }
+}
+
+@media (max-width: 1100px) {
+  .stage { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 900px) {
+  .lobby, .question, .auction, .games { grid-template-columns: minmax(0, 1fr); }
+  .podiums { justify-content: start; }
+}
+@media (max-width: 600px) {
+  .room { grid-template-columns: 46px minmax(0, 1fr) auto; }
+  .room .pill, .room .lock { display: none; }
+  .topnav .fs { margin-left: 0; }
+}
+@media (max-width: 480px) {
+  .stage { padding: 12px; border-radius: 22px; }
+  :root { --pod-w: 112px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sky i { animation: none; }
+  .card-inner { transition: none; }
+}
+</style>
+
+<div class="sky" aria-hidden="true"><i></i><i></i><i></i></div>
+
+<div class="shell">
+  <nav class="topnav">
+    <div class="group" role="tablist" aria-label="Экраны макета">
+      <span class="label">Экраны</span>
+      <button class="tab" role="tab" data-screen="games" id="tab-games">Список игр</button>
+      <button class="tab" role="tab" data-screen="lobby" id="tab-lobby">Лобби</button>
+      <button class="tab" role="tab" data-screen="board" id="tab-board">Табло</button>
+      <button class="tab" role="tab" data-screen="question" id="tab-question">Вопрос</button>
+      <button class="tab" role="tab" data-screen="auction" id="tab-auction">Аукцион</button>
+      <button class="tab" role="tab" data-screen="results" id="tab-results">Итоги</button>
+    </div>
+    <button class="tab fs" id="fs-btn">На весь экран</button>
+  </nav>
+
+  <div class="stage" id="stage" data-host="side">
+    <div class="main">
+      <header class="hud">
+        <div class="logo"><span class="mark" aria-hidden="true"></span>Квизориум</div>
+        <span class="chip games-only"><span class="dot" aria-hidden="true"></span>Онлайн: <b>1 284</b></span>
+        <span class="chip games-only">Открытых игр: <b id="games-count">8</b></span>
+        <span class="chip room-only"><span class="dot" aria-hidden="true"></span>Пак: <b>Сборная солянка</b></span>
+        <span class="chip room-only">Раунд <b>1</b> из 3</span>
+        <span class="chip room-only">Комната <span class="code">QZ-4F7K</span></span>
+      </header>
+
+      <div class="room-only" id="slot-top"></div>
+
+      <div class="area">
+        <!-- GAMES LIST -->
+        <section class="screen" id="screen-games" hidden>
+          <div class="games">
+            <div class="panel">
+              <div class="toolbar">
+                <input class="search" id="room-search" type="search" placeholder="Пак, комната или ведущий" aria-label="Поиск игр">
+                <div class="seg" id="status-filter">
+                  <button aria-pressed="true" data-v="all">Все</button><button aria-pressed="false" data-v="wait">Набор</button><button aria-pressed="false" data-v="play">Идут</button>
+                </div>
+                <div class="seg" id="lock-filter"><button aria-pressed="false" data-v="open">Без пароля</button></div>
+              </div>
+              <div class="room-list" id="room-list" role="listbox" aria-label="Игры"></div>
+              <div style="display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;margin-top:14px">
+                <button class="btn" id="join-code">Войти по коду</button>
+                <button class="btn primary" data-go="lobby">Создать игру</button>
+              </div>
+            </div>
+            <aside class="panel detail" id="room-detail"></aside>
+          </div>
+        </section>
+
+        <!-- LOBBY -->
+        <section class="screen" id="screen-lobby" hidden>
+          <div class="lobby">
+            <div class="panel">
+              <p class="eyebrow">Пак вопросов</p>
+              <div class="pack">
+                <div class="pack-cover" aria-hidden="true">СС</div>
+                <div>
+                  <h2>Сборная солянка</h2>
+                  <div style="color:var(--text-dim);font-size:14px">Автор: клуб «Мозговой штурм» · 2026</div>
+                  <div class="pack-meta">
+                    <span class="tag mint">SIQ · формат 5</span>
+                    <span class="tag">3 раунда + финал</span>
+                    <span class="tag">162 вопроса</span>
+                    <span class="tag">48 МБ медиа</span>
+                  </div>
+                </div>
+              </div>
+              <label class="drop" for="siq-file">
+                <span id="drop-text">Перетащи файл .siq сюда или выбери на диске</span>
+                <span class="btn ghost sm">Выбрать пак</span>
+                <input type="file" id="siq-file" accept=".siq,.zip">
+              </label>
+              <div class="settings">
+                <div class="setting"><span>Время на раздумье</span>
+                  <div class="seg"><button aria-pressed="false">5 с</button><button aria-pressed="true">7 с</button><button aria-pressed="false">10 с</button></div></div>
+                <div class="setting"><span>Время на ответ</span>
+                  <div class="seg"><button aria-pressed="false">10 с</button><button aria-pressed="true">20 с</button><button aria-pressed="false">30 с</button></div></div>
+                <div class="setting"><span>Ведущий</span>
+                  <div class="seg"><button aria-pressed="true">Человек</button><button aria-pressed="false">Автоматический</button></div></div>
+                <div class="setting"><span>Доступ</span>
+                  <div class="seg"><button aria-pressed="true">Открытая</button><button aria-pressed="false">С паролем</button><button aria-pressed="false">Друзья</button></div></div>
+              </div>
+            </div>
+            <div class="panel">
+              <p class="eyebrow">Игроки · 4 из 6</p>
+              <h2>Ждём, пока все нажмут «Готов»</h2>
+              <div class="slots">
+                <div class="slot"><img class="avatar" data-pid="anya" alt=""><div><b>Аня</b><div style="font-size:12px;color:var(--text-faint)">Ведущая</div></div><span class="ready">Готова</span></div>
+                <div class="slot"><img class="avatar" data-pid="max" alt=""><b>Макс</b><span class="ready">Готов</span></div>
+                <div class="slot"><img class="avatar" data-pid="lera" alt=""><b>Лера</b><span class="ready">Готова</span></div>
+                <div class="slot"><img class="avatar" data-pid="you" alt=""><b>Вы</b>
+                  <label class="av-pick" for="av-file">Сменить аватар<input type="file" id="av-file" accept="image/png,image/jpeg,image/gif,image/webp"></label>
+                  <span class="ready">Готов</span></div>
+                <div class="slot"><img class="avatar" data-pid="dima" alt=""><b>Дима</b><span class="wait">Загружает пак, 72%</span></div>
+                <div class="slot empty">Свободное место · зрители: 12</div>
+              </div>
+              <div class="lobby-actions">
+                <button class="btn">Пригласить друзей</button>
+                <button class="btn" id="copy-code">Скопировать код</button>
+                <button class="btn primary" data-go="board">Начать игру</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- BOARD -->
+        <section class="screen" id="screen-board" hidden>
+          <div class="board-wrap"><div class="board" id="board" aria-label="Табло вопросов"></div></div>
+          <div class="board-foot">
+            <span>Выбирает: <b id="chooser-name">Лера</b></span>
+            <span>Осталось вопросов: <b id="left-count">25</b></span>
+          </div>
+        </section>
+
+        <!-- QUESTION -->
+        <section class="screen" id="screen-question" hidden>
+          <div class="question">
+            <div class="q-card" id="q-card">
+              <div class="q-head">
+                <span class="eyebrow" style="margin:0" id="q-theme">Космос</span>
+                <span class="q-type" id="q-type" hidden>Аукцион</span>
+                <span class="q-price" id="q-price">300</span>
+              </div>
+              <div class="q-media" id="q-media" hidden><div class="planet"></div><small>Изображение из пака · Images/olympus.jpg</small></div>
+              <p class="q-text" id="q-text">Самый высокий вулкан Солнечной системы находится на Марсе. Как он называется?</p>
+              <div class="timer">
+                <div class="timer-row"><span id="timer-label">Время на раздумье</span><b id="timer-sec">7 с</b></div>
+                <div class="bar" id="q-bar"><i></i></div>
+              </div>
+              <button class="buzzer" id="buzzer">Ответить <kbd>Пробел</kbd></button>
+              <div class="answer-banner" id="answer-banner" hidden>
+                <img id="ab-img" alt="">
+                <div><small>Отвечает</small><b id="ab-name">Макс</b></div>
+                <span class="sec" id="ab-sec">10</span>
+              </div>
+              <div class="status" id="q-status" aria-live="polite">Кто первый нажмёт, тот и отвечает</div>
+            </div>
+            <aside class="panel host-panel">
+              <p class="eyebrow" style="margin:0">Пульт ведущего</p>
+              <div class="answer"><div class="eyebrow" style="margin-bottom:4px">Правильный ответ</div><p id="q-answer">Олимп</p></div>
+              <div class="row">
+                <button class="btn good" id="judge-good">Верно</button>
+                <button class="btn bad" id="judge-bad">Неверно</button>
+              </div>
+              <button class="btn ghost" id="skip-q">Пропустить вопрос</button>
+              <p class="note">Игроки не видят этот блок. В режиме автоматического ведущего ответ сверяется с вариантами из пака.</p>
+            </aside>
+          </div>
+        </section>
+
+        <!-- AUCTION -->
+        <section class="screen" id="screen-auction" hidden>
+          <div class="auction">
+            <div class="panel">
+              <p class="eyebrow">Еда мира · аукцион</p>
+              <h2>Торгуемся за вопрос</h2>
+              <div class="stake-big" id="stake-big">500</div>
+              <div style="color:var(--text-dim);font-size:14px">Текущая ставка · у Макса</div>
+              <div class="bids">
+                <div class="bid lead" id="bid-max"><img class="avatar" data-pid="max" alt=""><b>Макс</b><span class="val">500</span></div>
+                <div class="bid"><img class="avatar" data-pid="lera" alt=""><b>Лера</b><span class="val">400</span></div>
+                <div class="bid pass"><img class="avatar" data-pid="dima" alt=""><b>Дима</b><span class="val">Пас</span></div>
+                <div class="bid" id="my-bid"><img class="avatar" data-pid="you" alt=""><b>Вы</b><span class="val">Ход</span></div>
+              </div>
+            </div>
+            <div class="panel stake-ctrl">
+              <p class="eyebrow" style="margin:0">Ваша ставка</p>
+              <div class="stake-val" id="stake-val">600</div>
+              <input type="range" id="stake-range" min="600" max="600" step="100" value="600" aria-label="Размер ставки">
+              <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-faint)"><span>Мин. 600</span><span>Ваш счёт: <b id="stake-max">600</b></span></div>
+              <div class="row">
+                <button class="btn" id="bid-pass">Пас</button>
+                <button class="btn" id="bid-all">Ва-банк</button>
+                <button class="btn primary" id="bid-make">Ставлю</button>
+              </div>
+              <p class="note" id="bid-note">Ставка не может быть больше вашего счёта. Ва-банк перебивает любую ставку.</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- RESULTS -->
+        <section class="screen" id="screen-results" hidden>
+          <div class="results">
+            <p class="eyebrow" style="margin:0">Игра окончена · 42 минуты</p>
+            <h2 id="winner-line">Победил Макс</h2>
+            <div class="ranks" id="ranks"></div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">
+              <button class="btn" data-go="games">К списку игр</button>
+              <button class="btn primary" id="replay">Сыграть ещё раз</button>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <footer class="podiums room-only" id="podiums" aria-label="Игроки"></footer>
+    </div>
+
+    <aside class="side room-only">
+      <div id="slot-side"></div>
+      <section class="panel chat" aria-label="Чат">
+        <div class="chat-head">
+          <h2>Чат</h2>
+          <div class="seg" id="chat-filter">
+            <button aria-pressed="true" data-v="all">Всё</button><button aria-pressed="false" data-v="msg">Сообщения</button><button aria-pressed="false" data-v="ev">События</button>
+          </div>
+        </div>
+        <div class="chat-list" id="chat-list" aria-live="polite"></div>
+        <form class="chat-input" id="chat-form" autocomplete="off">
+          <input id="chat-text" type="text" placeholder="Лера, ты сегодня в ударе" maxlength="200" aria-label="Сообщение">
+          <button class="btn sm primary" type="submit">Отправить</button>
+        </form>
+        <p class="chat-err" id="chat-err" hidden>Напиши что-нибудь перед отправкой</p>
+      </section>
+    </aside>
+  </div>
+</div>
+
+<script>
+(() => {
+  const THINK = 7, ANSWER = 10;
+  const svg = s => "data:image/svg+xml," + encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>${s}</svg>`);
+  const blink = (x) => `<ellipse cx='${x}' cy='31' rx='3' ry='4' fill='#0b0f26'><animate attributeName='ry' values='4;4;0.4;4' keyTimes='0;0.9;0.95;1' dur='3.2s' repeatCount='indefinite'/></ellipse>`;
+  const AV = {
+    max: svg(`<rect width='64' height='64' fill='#43f0c4'/><circle cx='32' cy='72' r='30' fill='#1f9e80'/><circle cx='32' cy='32' r='17' fill='#b9fff0'/><path d='M15 28q17-22 34 0q-8-6-17-6t-17 6z' fill='#0b2a24'/>${blink(25)}${blink(39)}<path d='M26 39q6 5 12 0' stroke='#0b0f26' stroke-width='2.5' fill='none' stroke-linecap='round'/>`),
+    lera: svg(`<rect width='64' height='64' fill='#ff74b3'/><circle cx='32' cy='72' r='30' fill='#c94585'/><polygon points='16,22 20,6 28,18' fill='#ffd6e8'/><polygon points='48,22 44,6 36,18' fill='#ffd6e8'/><circle cx='32' cy='32' r='17' fill='#ffd6e8'/>${blink(25)}${blink(39)}<path d='M29 38l3 2 3-2' stroke='#0b0f26' stroke-width='2' fill='none'/><g stroke='#0b0f26' stroke-width='1.2'><line x1='12' y1='36' x2='22' y2='37'/><line x1='42' y1='37' x2='52' y2='36'/></g>`),
+    you: svg(`<rect width='64' height='64' fill='#8a7bff'/><circle cx='32' cy='72' r='30' fill='#5b4dd1'/><line x1='32' y1='10' x2='32' y2='17' stroke='#e6e2ff' stroke-width='2'/><circle cx='32' cy='9' r='3' fill='#ffd27a'><animate attributeName='fill' values='#ffd27a;#ff74b3;#43f0c4;#ffd27a' dur='1.6s' repeatCount='indefinite'/></circle><rect x='15' y='17' width='34' height='28' rx='8' fill='#e6e2ff'/><rect x='19' y='24' width='26' height='10' rx='5' fill='#0b0f26'/><circle cy='29' r='3' fill='#43f0c4'><animate attributeName='cx' values='23;41;23' dur='2s' repeatCount='indefinite'/></circle><rect x='26' y='38' width='12' height='3' rx='1.5' fill='#5b4dd1'/>`),
+    dima: svg(`<rect width='64' height='64' fill='#ffd27a'/><circle cx='32' cy='72' r='30' fill='#d9a441'/><circle cx='32' cy='32' r='14' fill='#fff0cc'/><ellipse cx='32' cy='32' rx='24' ry='7' fill='none' stroke='#0b0f26' stroke-width='2' transform='rotate(-20 32 32)'/><g><animateTransform attributeName='transform' type='rotate' from='0 32 32' to='360 32 32' dur='4s' repeatCount='indefinite'/><circle cx='55' cy='32' r='4' fill='#ff74b3'/></g>${blink(27)}${blink(37)}`),
+    anya: svg(`<rect width='64' height='64' fill='#dfe5ff'/><circle cx='32' cy='72' r='30' fill='#8a97d6'/><circle cx='32' cy='30' r='16' fill='#ffffff'/><g><animateTransform attributeName='transform' type='rotate' from='0 32 30' to='360 32 30' dur='6s' repeatCount='indefinite'/><path d='M32 4l3 7-3 2-3-2z' fill='#8a7bff'/></g>${blink(26)}${blink(38)}<path d='M27 37q5 4 10 0' stroke='#0b0f26' stroke-width='2.2' fill='none' stroke-linecap='round'/>`),
+    viewer: svg(`<rect width='64' height='64' fill='#2a3366'/><circle cx='32' cy='26' r='11' fill='#6f7aa6'/><circle cx='32' cy='62' r='20' fill='#6f7aa6'/>`)
+  };
+  const players = [
+    { id: "max", name: "Макс", score: 1200, color: "#43f0c4" },
+    { id: "lera", name: "Лера", score: 800, color: "#ff74b3" },
+    { id: "you", name: "Вы", score: 600, you: true, color: "#8a7bff" },
+    { id: "dima", name: "Дима", score: -200, color: "#ffd27a" }
+  ];
+  const HOST = { id: "anya", name: "Аня", role: "Ведущая", color: "#dfe5ff" };
+  const pById = id => id === "anya" ? HOST : players.find(p => p.id === id);
+  const themes = ["Кино", "Космос", "Видеоигры", "Еда мира", "Языки"];
+  const prices = [100, 200, 300, 400, 500];
+  const Q = {
+    "Кино": [["Как зовут робота-мусорщика из мультфильма Pixar 2008 года?", "ВАЛЛ-И"], ["Кто сыграл Нео в «Матрице»?", "Киану Ривз"], ["Какой фильм первым собрал в прокате больше 2 миллиардов долларов?", "«Аватар»"], ["Кто снял «Сталкера» в 1979 году?", "Андрей Тарковский"], ["Из какого вымышленного металла сделан щит Капитана Америка?", "Вибраниум"]],
+    "Космос": [["Какая планета ближе всех к Солнцу?", "Меркурий"], ["Как звали первую собаку, побывавшую на орбите?", "Лайка"], ["Самый высокий вулкан Солнечной системы находится на Марсе. Как он называется?", "Олимп", "media"], ["Как называется граница чёрной дыры, из-за которой ничто не возвращается?", "Горизонт событий"], ["Сколько примерно минут свет летит от Солнца до Земли?", "Около 8 минут"]],
+    "Видеоигры": [["Как зовут водопроводчика в красной кепке из игр Nintendo?", "Марио"], ["Какую игру Алексей Пажитнов написал в 1984 году?", "«Тетрис»"], ["Как называется город, где начинается Half-Life 2?", "Сити 17"], ["Какая польская студия делает серию «Ведьмак»?", "CD Projekt Red"], ["В какой игре 1980 года жёлтый круг ест точки в лабиринте?", "Pac-Man"]],
+    "Еда мира": [["Из какой страны родом паэлья?", "Испания"], ["Как называется японский суп на пасте из соевых бобов?", "Мисо"], ["Какой сыр кладут в греческий салат?", "Фета", "auction"], ["Как называется грузинская лепёшка-лодочка с сыром и яйцом?", "Хачапури по-аджарски"], ["Какая специя самая дорогая в мире по весу?", "Шафран"]],
+    "Языки": [["Сколько букв в русском алфавите?", "33"], ["Какой язык родной для наибольшего числа людей?", "Китайский"], ["Что значит японское «аригато»?", "Спасибо"], ["На каком языке написан «Дон Кихот»?", "Испанский"], ["Как называется язык, который придумал Людвик Заменгоф?", "Эсперанто"]]
+  };
+  const rooms = [
+    { name: "Пятничный квиз", pack: "Сборная солянка", host: "Аня", n: 4, max: 6, st: "wait", lock: false, c: ["#ff74b3", "#8a7bff"], ab: "СС", rounds: "3 раунда + финал", q: 162, desc: "Разминка перед выходными: кино, космос, еда и языки. Новичкам рады." },
+    { name: "Аниме-марафон", pack: "Аниме 2000-х", host: "Kiri", n: 6, max: 6, st: "play", round: "Раунд 2 из 4", lock: false, c: ["#43f0c4", "#3b6dff"], ab: "А2", rounds: "4 раунда + финал", q: 210, desc: "Опенинги, персонажи и студии нулевых. Аудио-вопросы в каждом раунде." },
+    { name: "Учёные кошки", pack: "Наука для всех", host: "Профессор", n: 2, max: 5, st: "wait", lock: true, c: ["#ffd27a", "#ff7a4d"], ab: "НВ", rounds: "3 раунда", q: 120, desc: "Физика, биология, история открытий. Комната для своих, пароль у ведущего." },
+    { name: "Кассеты и CD", pack: "Музыка 90-х", host: "DJ Слава", n: 3, max: 6, st: "play", round: "Раунд 1 из 3", lock: false, c: ["#8a7bff", "#ff74b3"], ab: "90", rounds: "3 раунда + финал", q: 150, desc: "Угадай мелодию по первым секундам, клипы и обложки." },
+    { name: "Без карты", pack: "География без карты", host: "Марина", n: 1, max: 4, st: "wait", lock: false, c: ["#43f0c4", "#ffd27a"], ab: "ГК", rounds: "2 раунда", q: 60, desc: "Страны, столицы и флаги. Короткая игра на 20 минут." },
+    { name: "Ночной стрим", pack: "Мемы и интернет", host: "streamer_ok", n: 5, max: 8, st: "play", round: "Финал", lock: false, c: ["#ff74b3", "#ffd27a"], ab: "МИ", rounds: "3 раунда + финал", q: 140, desc: "Стрим с чатом. Зрители голосуют за любимого игрока." },
+    { name: "Сериальный клуб", pack: "Кино и сериалы", host: "Олег", n: 4, max: 6, st: "wait", lock: true, c: ["#3b6dff", "#43f0c4"], ab: "КС", rounds: "3 раунда", q: 135, desc: "Только сериалы после 2010 года. Спойлеры неизбежны." },
+    { name: "Олимпийский резерв", pack: "Спорт: история", host: "Тренер", n: 3, max: 6, st: "wait", lock: false, c: ["#ff7a4d", "#8a7bff"], ab: "СИ", rounds: "3 раунда + финал", q: 158, desc: "Олимпиады, рекорды и легенды спорта с видеовопросами." }
+  ];
+  const played = new Set();
+  let chooser = "lera", answering = null, current = { theme: "Космос", i: 2 }, timerId = null, secLeft = THINK, phase = "think", curPrice = 300;
+  let filt = { q: "", st: "all", open: false }, selRoom = 0, hostLine = "Лера, выбирайте вопрос", hostVariant = "side", chatFilter = "all";
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const now = () => new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  const lockSvg = `<svg class="lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-label="С паролем"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>`;
+  const micSvg = `<span class="mic" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></span>`;
+  const avatarOf = p => p.img || AV[p.id];
+
+  function paintAvatars() { document.querySelectorAll("img[data-pid]").forEach(img => img.src = AV[img.dataset.pid] || AV.viewer); }
+
+  /* Chat + feed */
+  const chat = [];
+  function feed(kind, html) { chat.push({ t: "ev", kind, html, time: now() }); renderChat(); }
+  function say(pid, text, viewer) { chat.push({ t: "msg", pid, text, viewer, time: now() }); renderChat(); }
+  function renderChat() {
+    const list = $("chat-list");
+    const items = chat.filter(m => chatFilter === "all" || (chatFilter === "msg" ? m.t === "msg" : m.t === "ev"));
+    list.innerHTML = items.map(m => {
+      if (m.t === "ev") return `<div class="ev ${m.kind}"><span>${m.html}</span><time>${m.time}</time></div>`;
+      const p = m.viewer ? { name: m.pid, color: "#a7b1d8", id: "viewer" } : pById(m.pid);
+      const cls = m.viewer ? "viewer" : m.pid === "anya" ? "host" : "";
+      return `<div class="msg ${cls}"><img alt="" src="${m.viewer ? AV.viewer : avatarOf(p)}"><div><div class="meta"><b style="color:${p.color}">${esc(p.name)}</b>${m.viewer ? "зритель · " : m.pid === "anya" ? "ведущая · " : ""}${m.time}</div><div class="txt">${esc(m.text)}</div></div></div>`;
+    }).join("");
+    list.scrollTop = list.scrollHeight;
+  }
+  $("chat-filter").addEventListener("click", e => {
+    const b = e.target.closest("button"); if (!b) return;
+    chatFilter = b.dataset.v;
+    $("chat-filter").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b));
+    renderChat();
+  });
+  $("chat-form").addEventListener("submit", e => {
+    e.preventDefault();
+    const v = $("chat-text").value.trim();
+    if (!v) { $("chat-err").hidden = false; return; }
+    say("you", v); $("chat-text").value = "";
+    const replies = [["lera", "ахах, согласна"], ["max", "посмотрим, кто кого"], ["dima", "+"], ["kot_42", "чат одобряет", true]];
+    const r = replies[Math.floor(Math.random() * replies.length)];
+    setTimeout(() => say(r[0], r[1], r[2]), 1200);
+  });
+  $("chat-text").addEventListener("input", () => $("chat-err").hidden = true);
+  [
+    () => feed("", "Аня создала комнату <b>«Пятничный квиз»</b>"),
+    () => say("max", "всем привет, я за кино"),
+    () => say("lera", "космос мой, даже не думайте"),
+    () => say("dima", "у меня пак ещё грузится, не начинайте без меня"),
+    () => say("anya", "Дима, ждём. Остальные, жмите «Готов»"),
+    () => feed("", "Пак <b>«Сборная солянка»</b> загружен у всех"),
+    () => feed("pick", "Раунд 1 начался. Первой выбирает <b>Лера</b> (жребий)"),
+    () => say("kot_42", "Лера, давай!", true)
+  ].forEach(f => f());
+
+  /* Host */
+  function hostSay(text) { hostLine = text; document.querySelectorAll(".say[data-host-line]").forEach(el => el.textContent = text); }
+  function hostCard() {
+    return `<div class="podium host-card"><span class="tagtop">Ведущая</span>
+      <div class="pic"><img src="${AV.anya}" alt="">${micSvg}</div>
+      <div class="name">${HOST.name}</div>
+      <div class="say" data-host-line>${esc(hostLine)}</div></div>`;
+  }
+  function renderHost() {
+    $("stage").dataset.host = hostVariant;
+    $("slot-top").innerHTML = hostVariant === "top" ? `<div class="host-strip"><img src="${AV.anya}" alt=""><div class="who"><span class="role">Ведущая</span><b>${HOST.name}</b></div><div class="say" data-host-line>${esc(hostLine)}</div></div>` : "";
+    $("slot-side").innerHTML = hostVariant === "side" ? `<div class="host-side"><div class="pic"><img src="${AV.anya}" alt="">${micSvg}</div><div class="who"><span class="role">Ведущая</span><b>${HOST.name}</b><div class="note">Ведёт 214-ю игру</div></div><div class="say" data-host-line>${esc(hostLine)}</div></div>` : "";
+    renderPodiums();
+  }
+
+  /* Games list */
+  function visibleRooms() {
+    const q = filt.q.trim().toLowerCase();
+    return rooms.map((r, i) => ({ r, i })).filter(({ r }) =>
+      (filt.st === "all" || r.st === filt.st) && (!filt.open || !r.lock) &&
+      (!q || (r.name + " " + r.pack + " " + r.host).toLowerCase().includes(q)));
+  }
+  function renderRooms() {
+    const list = visibleRooms();
+    $("games-count").textContent = rooms.length;
+    if (!list.some(x => x.i === selRoom) && list.length) selRoom = list[0].i;
+    $("room-list").innerHTML = list.length ? list.map(({ r, i }) => {
+      const full = r.n >= r.max;
+      const pill = r.st === "play" ? `<span class="pill play">${r.round}</span>` : full ? `<span class="pill full">Мест нет</span>` : `<span class="pill wait">Набор</span>`;
+      return `<button class="room" role="option" data-i="${i}" aria-selected="${i === selRoom}">
+        <span class="cover" style="background:linear-gradient(135deg,${r.c[0]},${r.c[1]})">${r.ab}</span>
+        <span class="info"><b>${esc(r.name)}</b><span>${esc(r.pack)} · ведёт ${esc(r.host)}</span></span>
+        <span class="seats">${r.n}<small>/${r.max}</small></span>${pill}<span>${r.lock ? lockSvg : ""}</span></button>`;
+    }).join("") : `<div class="empty-list">Под фильтр ничего не подошло. Сбрось поиск или создай свою игру.</div>`;
+    renderDetail(list.length ? rooms[selRoom] : null);
+  }
+  function renderDetail(r) {
+    const d = $("room-detail");
+    if (!r) { d.innerHTML = `<p class="eyebrow" style="margin:0">Игра не выбрана</p><p>Выбери комнату слева, чтобы увидеть пак и игроков.</p>`; return; }
+    const ids = ["max", "lera", "you", "dima", "anya"];
+    const avs = Array.from({ length: Math.min(r.n, 5) }, (_, k) => `<img class="avatar" alt="" src="${AV[ids[(k + r.n) % 5]]}">`).join("");
+    const canJoin = r.st === "wait" && r.n < r.max;
+    d.innerHTML = `<div class="big-cover" style="background:linear-gradient(135deg,${r.c[0]},${r.c[1]})">${r.ab}</div>
+      <div><p class="eyebrow" style="margin-bottom:4px">${r.lock ? "С паролем" : "Открытая игра"}</p><h2>${esc(r.name)}</h2></div>
+      <p>${esc(r.desc)}</p>
+      <dl class="kv"><dt>Пак</dt><dd>${esc(r.pack)}</dd><dt>Структура</dt><dd>${r.rounds}, ${r.q} вопросов</dd><dt>Ведущий</dt><dd>${esc(r.host)}</dd><dt>Статус</dt><dd>${r.st === "play" ? r.round : "Набор игроков"}</dd></dl>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><div class="av-stack">${avs}</div><span class="seats">${r.n}<small>/${r.max} игроков</small></span></div>
+      <div class="actions"><button class="btn ghost" data-go="board">Смотреть</button><button class="btn primary" data-go="lobby">${canJoin ? "Войти" : "В очередь"}</button></div>`;
+    d.querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => show(b.dataset.go)));
+  }
+  $("room-list").addEventListener("click", e => { const b = e.target.closest(".room"); if (b) { selRoom = +b.dataset.i; renderRooms(); } });
+  $("room-search").addEventListener("input", e => { filt.q = e.target.value; renderRooms(); });
+  $("status-filter").addEventListener("click", e => {
+    const b = e.target.closest("button"); if (!b) return;
+    filt.st = b.dataset.v;
+    $("status-filter").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b));
+    renderRooms();
+  });
+  $("lock-filter").addEventListener("click", e => {
+    const b = e.target.closest("button"); if (!b) return;
+    filt.open = !filt.open; b.setAttribute("aria-pressed", filt.open); renderRooms();
+  });
+  $("join-code").addEventListener("click", e => { e.currentTarget.textContent = "Код QZ-4F7K принят"; setTimeout(() => show("lobby"), 700); });
+
+  /* Player row */
+  function playerCard(p) {
+    const cls = answering === p.id ? "answering" : (chooser === p.id && !answering ? "choosing" : "");
+    const state = answering === p.id ? "Отвечает" : chooser === p.id ? "Выбирает" : "В игре";
+    return `<div class="podium ${cls}" id="pod-${p.id}">
+      <span class="flag">Отвечает</span>
+      <div class="pic"><img src="${avatarOf(p)}" alt=""><span class="gif">${p.img ? "IMG" : "GIF"}</span></div>
+      <div class="name">${p.name}${p.you ? '<span class="you-tag">вы</span>' : ''}</div>
+      <div class="score ${p.score < 0 ? "neg" : ""}">${p.score.toLocaleString("ru-RU")}</div>
+      <div class="state">${state}</div>
+      <span class="pbar"><i></i></span></div>`;
+  }
+  function renderPodiums() {
+    const box = $("podiums");
+    box.classList.toggle("dim", !!answering);
+    box.classList.toggle("with-divider", hostVariant === "row");
+    const cards = players.map(playerCard);
+    if (hostVariant === "row") box.innerHTML = hostCard() + `<span class="divider" aria-hidden="true"></span>` + cards.join("");
+    else if (hostVariant === "center") { const h = Math.ceil(cards.length / 2); box.innerHTML = cards.slice(0, h).join("") + hostCard() + cards.slice(h).join(""); }
+    else box.innerHTML = cards.join("");
+    if (answering) {
+      const i = document.querySelector(`#pod-${answering} .pbar i`);
+      i?.animate([{ transform: "scaleX(1)" }, { transform: "scaleX(0)" }], { duration: secLeft * 1000, fill: "forwards", easing: "linear" });
+    }
+  }
+
+  /* Board */
+  function renderBoard() {
+    let html = "";
+    themes.forEach(t => {
+      const done = prices.every((_, i) => played.has(t + i));
+      html += `<div class="theme ${done ? "done" : ""}">${t}</div>`;
+      prices.forEach((p, i) => {
+        const isPlayed = played.has(t + i);
+        html += `<button class="card ${isPlayed ? "played" : ""}" data-theme="${t}" data-i="${i}" aria-label="${t}, ${p}" ${isPlayed ? 'tabindex="-1"' : ""}>
+          <span class="card-inner"><span class="face front">${isPlayed ? "" : p}</span><span class="face back">Вопрос</span></span></button>`;
+      });
+    });
+    $("board").innerHTML = html;
+    $("left-count").textContent = 25 - played.size;
+    $("chooser-name").textContent = pById(chooser).name;
+  }
+  $("board").addEventListener("click", e => {
+    const card = e.target.closest(".card");
+    if (!card || card.classList.contains("played") || card.classList.contains("flipped")) return;
+    card.classList.add("flipped");
+    current = { theme: card.dataset.theme, i: +card.dataset.i };
+    const price = prices[current.i], who = pById(chooser).name;
+    feed("pick", `<b>${who}</b> выбирает «${current.theme}» за ${price}`);
+    const isAuction = Q[current.theme][current.i][2] === "auction";
+    hostSay(isAuction ? `«${current.theme}», ${price}. Это аукцион!` : `«${current.theme}», ${price}. Внимание, вопрос`);
+    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    setTimeout(() => isAuction ? show("auction") : openQuestion(), reduce ? 0 : 700);
+  });
+
+  /* Question */
+  function openQuestion(price) {
+    const [text, ans, kind] = Q[current.theme][current.i];
+    curPrice = price || prices[current.i];
+    $("q-theme").textContent = current.theme;
+    $("q-price").textContent = curPrice;
+    $("q-text").textContent = text;
+    $("q-answer").textContent = ans;
+    $("q-media").hidden = kind !== "media";
+    $("q-type").hidden = kind !== "auction";
+    answering = null;
+    show("question", true);
+    const card = $("q-card");
+    card.classList.remove("enter"); void card.offsetWidth; card.classList.add("enter");
+    startThink();
+  }
+  function setBar(sec, kind) {
+    const bar = $("q-bar"), i = bar.querySelector("i");
+    bar.className = "bar" + (kind === "answer" ? " answer" : "");
+    i.style.animation = "none"; void i.offsetWidth;
+    i.style.animation = `drain ${sec}s linear forwards`;
+  }
+  function tick(onEnd) {
+    clearInterval(timerId);
+    const paint = () => { $("timer-sec").textContent = Math.max(0, secLeft) + " с"; $("ab-sec").textContent = Math.max(0, secLeft); };
+    paint();
+    timerId = setInterval(() => { secLeft--; paint(); if (secLeft <= 0) { clearInterval(timerId); onEnd(); } }, 1000);
+  }
+  function setAnswerUI(pid) {
+    const on = !!pid;
+    $("buzzer").hidden = on;
+    $("answer-banner").hidden = !on;
+    $("q-card").classList.toggle("is-answer", on);
+    if (on) { const p = pById(pid); $("ab-img").src = avatarOf(p); $("ab-name").textContent = p.name; }
+  }
+  function startThink() {
+    phase = "think"; secLeft = THINK;
+    setAnswerUI(null);
+    $("timer-label").textContent = "Время на раздумье";
+    $("buzzer").setAttribute("aria-disabled", "false");
+    $("q-status").innerHTML = "Кто первый нажмёт, тот и отвечает";
+    setBar(THINK, "think");
+    renderPodiums();
+    tick(() => {
+      const ans = Q[current.theme][current.i][1];
+      $("q-status").innerHTML = "Никто не ответил. Правильно: <b>" + esc(ans) + "</b>";
+      $("buzzer").setAttribute("aria-disabled", "true");
+      feed("", `Время вышло. Ответ: <b>${esc(ans)}</b>`);
+      hostSay(`Никто не рискнул. Правильный ответ: ${ans}`);
+      phase = "done";
+      setTimeout(finishQuestion, 1800);
+    });
+  }
+  function buzz(pid) {
+    if (phase !== "think" || $("screen-question").hidden) return;
+    const reaction = (0.2 + Math.random() * 0.6).toFixed(2).replace(".", ",");
+    phase = "answer"; answering = pid; secLeft = ANSWER;
+    setAnswerUI(pid);
+    $("timer-label").textContent = "Время на ответ";
+    $("q-status").innerHTML = "Ведущий слушает ответ";
+    setBar(ANSWER, "answer");
+    renderPodiums();
+    const name = pById(pid).name;
+    feed("buzz", `<b>${name}</b> жмёт первым · ${reaction} с`);
+    hostSay(`${name}, ваш ответ?`);
+    tick(() => judge(false));
+  }
+  function judge(ok) {
+    if (!answering) return;
+    clearInterval(timerId);
+    const p = pById(answering), id = answering;
+    p.score += ok ? curPrice : -curPrice;
+    answering = null;
+    setAnswerUI(null);
+    $("buzzer").setAttribute("aria-disabled", "true");
+    renderPodiums();
+    $("pod-" + id).classList.add(ok ? "flash-good" : "flash-bad");
+    if (ok) {
+      chooser = id; phase = "done";
+      $("q-status").innerHTML = "<b>Верно!</b> +" + curPrice;
+      feed("good", `<b>${p.name}</b> отвечает верно · +${curPrice}`);
+      hostSay(`Верно! ${p.name}, выбирайте следующий`);
+      if (Math.random() < .6) setTimeout(() => say(id === "lera" ? "max" : "lera", ["ну это было легко", "красиво", "ладно, засчитано"][Math.floor(Math.random() * 3)]), 900);
+      setTimeout(finishQuestion, 1200);
+    } else {
+      $("q-status").innerHTML = "Неверно, −" + curPrice + ". Остальные могут ответить";
+      feed("bad", `<b>${p.name}</b> ошибается · −${curPrice}`);
+      hostSay("Неверно. Кто ещё попробует?");
+      phase = "wait";
+      setTimeout(startThink, 1000);
+    }
+  }
+  function finishQuestion() {
+    clearInterval(timerId);
+    played.add(current.theme + current.i);
+    answering = null;
+    if (played.size >= 25) { feed("", "Раунд окончен"); show("results"); return; }
+    hostSay(`${pById(chooser).name}, выбирайте вопрос`);
+    show("board");
+  }
+  $("buzzer").addEventListener("click", () => buzz("you"));
+  document.addEventListener("keydown", e => {
+    if (e.code === "Space" && !$("screen-question").hidden && !/INPUT|BUTTON|TEXTAREA/.test(e.target.tagName)) { e.preventDefault(); buzz("you"); }
+  });
+  $("judge-good").addEventListener("click", () => judge(true));
+  $("judge-bad").addEventListener("click", () => judge(false));
+  $("skip-q").addEventListener("click", () => { feed("", "Ведущая пропустила вопрос"); finishQuestion(); });
+
+  /* Auction */
+  const you = pById("you");
+  function setupAuction() {
+    const r = $("stake-range");
+    r.max = Math.max(600, you.score); r.value = 600;
+    $("stake-max").textContent = you.score;
+    $("stake-val").textContent = r.value;
+    $("my-bid").querySelector(".val").textContent = "Ход";
+    $("my-bid").className = "bid";
+    $("bid-max").className = "bid lead";
+    $("stake-big").textContent = "500";
+    $("bid-note").textContent = "Ставка не может быть больше вашего счёта. Ва-банк перебивает любую ставку.";
+  }
+  $("stake-range").addEventListener("input", e => $("stake-val").textContent = e.target.value);
+  function winAuction(val, label) {
+    $("my-bid").querySelector(".val").textContent = label;
+    $("my-bid").className = "bid lead";
+    $("bid-max").className = "bid";
+    $("stake-big").textContent = val;
+    $("bid-note").textContent = "Остальные спасовали. Вопрос ваш за " + val + ".";
+    feed("bid", `<b>Вы</b> ставите ${label === "Ва-банк" ? "ва-банк, " : ""}${val}`);
+    hostSay(`Продано за ${val}! Слушайте вопрос`);
+    setTimeout(() => { openQuestion(val); setTimeout(() => buzz("you"), 300); }, 1100);
+  }
+  $("bid-make").addEventListener("click", () => winAuction(+$("stake-range").value, $("stake-range").value));
+  $("bid-all").addEventListener("click", () => winAuction(Math.max(you.score, 600), "Ва-банк"));
+  $("bid-pass").addEventListener("click", () => {
+    $("my-bid").querySelector(".val").textContent = "Пас"; $("my-bid").className = "bid pass";
+    $("bid-note").textContent = "Вопрос уходит Максу за 500.";
+    feed("bid", "<b>Вы</b> пасуете. Вопрос у <b>Макса</b> за 500");
+    hostSay("Макс, вопрос ваш за 500");
+    setTimeout(() => { openQuestion(500); setTimeout(() => buzz("max"), 300); }, 1100);
+  });
+
+  /* Results */
+  function renderResults() {
+    const sorted = [...players].sort((a, b) => b.score - a.score).slice(0, 3);
+    const order = [sorted[1], sorted[0], sorted[2]].filter(Boolean);
+    $("ranks").innerHTML = order.map(p => `<div class="rank"><img class="avatar" alt="" src="${avatarOf(p)}"><b>${p.name}</b>
+      <div class="stand"><span class="place">${sorted.indexOf(p) + 1}</span><span class="pts">${p.score.toLocaleString("ru-RU")}</span></div></div>`).join("");
+    $("winner-line").textContent = sorted[0].you ? "Вы победили" : "Победил " + sorted[0].name;
+    hostSay(`Поздравляем, ${sorted[0].name}! Спасибо всем за игру`);
+  }
+  $("replay").addEventListener("click", () => { played.clear(); players.forEach((p, i) => p.score = [1200, 800, 600, -200][i]); feed("", "Новая игра с тем же паком"); show("board"); });
+
+  /* Lobby */
+  document.querySelectorAll(".setting .seg").forEach(seg => seg.addEventListener("click", e => {
+    const b = e.target.closest("button"); if (!b) return;
+    seg.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b));
+  }));
+  $("siq-file").addEventListener("change", e => {
+    const f = e.target.files[0];
+    if (f) $("drop-text").textContent = `${f.name} · ${(f.size / 1048576).toFixed(1)} МБ. В макете пак не разбирается`;
+  });
+  $("av-file").addEventListener("change", e => {
+    const f = e.target.files[0]; if (!f) return;
+    you.img = URL.createObjectURL(f); AV.you = you.img;
+    paintAvatars(); renderPodiums(); renderChat();
+    feed("", "<b>Вы</b> сменили аватар");
+  });
+  $("copy-code").addEventListener("click", e => {
+    const b = e.currentTarget;
+    (navigator.clipboard ? navigator.clipboard.writeText("QZ-4F7K") : Promise.reject()).then(() => b.textContent = "Скопировано").catch(() => b.textContent = "QZ-4F7K");
+  });
+  document.querySelectorAll(".screen [data-go]").forEach(b => b.addEventListener("click", () => show(b.dataset.go)));
+
+  /* Fullscreen */
+  const fsBtn = $("fs-btn");
+  fsBtn.addEventListener("click", () => {
+    const d = document;
+    if (d.fullscreenElement) d.exitFullscreen?.().catch(() => {});
+    else (d.documentElement.requestFullscreen?.() || Promise.reject()).catch(() => { fsBtn.textContent = "Нажми F11"; });
+  });
+  document.addEventListener("fullscreenchange", () => fsBtn.textContent = document.fullscreenElement ? "Выйти из полноэкранного" : "На весь экран");
+
+  /* Screens */
+  const SCREENS = ["games", "lobby", "board", "question", "auction", "results"];
+  function show(name, fromBoard) {
+    if (!SCREENS.includes(name)) name = "games";
+    clearInterval(timerId);
+    $("stage").dataset.screen = name;
+    SCREENS.forEach(s => { $("screen-" + s).hidden = s !== name; $("tab-" + s).setAttribute("aria-selected", s === name); });
+    if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
+    if (name !== "question") { answering = null; setAnswerUI(null); }
+    if (name === "games") renderRooms();
+    if (name === "board") renderBoard();
+    if (name === "question" && !fromBoard) openQuestion();
+    if (name === "auction") setupAuction();
+    if (name === "results") renderResults();
+    if (name !== "question" || !fromBoard) renderPodiums();
+    paintAvatars();
+  }
+  document.querySelectorAll("[role=tab][data-screen]").forEach(t => t.addEventListener("click", () => {
+    if (t.dataset.screen === "question") current = { theme: "Космос", i: 2 };
+    if (t.dataset.screen === "auction") current = { theme: "Еда мира", i: 2 };
+    show(t.dataset.screen);
+  }));
+  addEventListener("hashchange", () => { const h = location.hash.slice(1); if ($("stage").dataset.screen !== h) show(h); });
+  renderHost();
+  show(location.hash.slice(1) || "board");
+})();
+</script>

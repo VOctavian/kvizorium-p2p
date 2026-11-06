@@ -1,0 +1,52 @@
+{
+  "name": "@kvz/desktop",
+  "productName": "Квизориум",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Квизориум для Steam и ПК",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win --dir"
+  },
+  "build": {
+    "appId": "com.kvizorium.app",
+    "productName": "Kvizorium",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../server/dist/index.cjs",
+        "to": "server/index.cjs"
+      },
+      {
+        "from": "../web/dist",
+        "to": "web"
+      },
+      {
+        "from": "../../packs",
+        "to": "packs",
+        "filter": [
+          "*.siq"
+        ]
+      },
+      {
+        "from": "steam_appid.txt",
+        "to": "../steam_appid.txt"
+      }
+    ],
+    "win": {
+      "target": "dir"
+    }
+  },
+  "devDependencies": {
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0"
+  }
+}

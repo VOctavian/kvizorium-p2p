@@ -1,0 +1,6 @@
+# Caddy gets and renews the HTTPS certificate by itself. HTTPS is required: the browser's
+# encryption (pack sharing) and WebRTC work only on secure pages.
+{{DOMAIN}} {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8787
+}

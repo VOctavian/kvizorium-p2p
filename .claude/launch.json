@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "kvizorium-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
+      "port": 5173
+    },
+    {
+      "name": "kvizorium-p2p",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev:p2p"
+      ],
+      "port": 5174
+    }
+  ]
+}

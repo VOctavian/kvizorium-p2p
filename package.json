@@ -1,0 +1,31 @@
+{
+  "name": "kvizorium",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Квизориум — своя квиз-игра, совместимая с паками .siq",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c cyan,magenta \"npm run dev -w @kvz/server\" \"npm run dev -w @kvz/web\"",
+    "build": "npm run build -w @kvz/web && npm run build -w @kvz/server",
+    "start": "node apps/server/dist/server.cjs",
+    "dev:p2p": "npm run dev:p2p -w @kvz/web",
+    "build:pages": "npm run build:pages -w @kvz/web",
+    "demo-packs": "tsx tools/make-demo-packs.ts",
+    "test": "tsx packages/siq/test/parse.test.ts && tsx apps/server/test/game.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "desktop": "npm run build && npm run start -w @kvz/desktop",
+    "desktop:dist": "npm run build && npm run dist -w @kvz/desktop"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/ws": "^8.18.2",
+    "concurrently": "^10.0.6",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
