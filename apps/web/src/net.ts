@@ -25,7 +25,7 @@ export interface State {
   offset: number;
   toast?: { text: string; at: number; tone?: "bad" | "info" };
   /** Pack upload in progress from this client. */
-  upload?: { name: string; progress: number };
+  upload?: { name: string; progress: number; convert?: { done: number; total: number } };
 }
 
 /** A pack chosen in the "new game" dialog, sent as soon as the room exists. */
@@ -39,7 +39,7 @@ export function setPendingPack(p: { file?: File; demoId?: string } | null) { pen
 export async function sendPack(_roomId: string, file: File) {
   set({ upload: { name: file.name, progress: 0 } });
   try {
-    const { xml, files, unplayable } = await preparePack(file, (progress) => set({ upload: { name: file.name, progress } }));
+    const { xml, files, unplayable } = await preparePack(file, (p) => set({ upload: { name: file.name, ...p } }));
     send({ t: "sharePack", xml, files });
     const dead = Object.entries(unplayable);
     if (dead.length) toast(tr().packUnplayable(dead.reduce((n, [, c]) => n + c, 0), dead.map(([e]) => e).join(", ")), "info");

@@ -270,6 +270,8 @@ export interface SharedFile {
   key: string;
   /** Seconds, for sound and video: measured by the leader's browser, so the reading lasts as long as the clip. */
   dur?: number;
+  /** Set when the leader's browser converted the file (e.g. WMV to MP4): its real type, whatever the name says. */
+  mime?: string;
 }
 
 export interface RoomView {

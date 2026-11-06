@@ -4,6 +4,7 @@
  * browsers of the room over WebRTC; each one is checked against its SHA-256 and kept in IndexedDB.
  * The server hands out a file's key when the file is on screen, so nobody can look ahead.
  */
+import { needsConversion, toPlayable } from "./convert.ts";
 import { MAX_PACK_MB, type ClientMsg, type SharedFile } from "@kvz/protocol";
 
 /* ---------- wiring ---------- */
@@ -106,10 +107,10 @@ function durationOf(bytes: Uint8Array): Promise<number | undefined> {
   });
 }
 
-/** Video and sound formats no browser plays, by extension. */
-const DEAD_EXT = /\.(wmv|avi|flv|wma|mpg|mpeg|3gp|amr|asf|rm|rmvb)$/i;
+/** Progress of preparing a pack: `convert` while clips browsers can't play are being converted. */
+export interface PrepProgress { progress: number; convert?: { done: number; total: number } }
 
-export async function preparePack(file: File, onProgress: (p: number) => void): Promise<{ xml: string; files: SharedFile[]; unplayable: Record<string, number> }> {
+export async function preparePack(file: File, onProgress: (p: PrepProgress) => void): Promise<{ xml: string; files: SharedFile[]; unplayable: Record<string, number> }> {
   if (file.size > MAX_PACK_MB * 1048576) throw new ShareError("tooBig");
   // The unzipper and the XML parser are needed only by the leader: loaded on demand.
   const { openPack } = await import("@kvz/siq");
@@ -117,9 +118,21 @@ export async function preparePack(file: File, onProgress: (p: number) => void): 
   try {
     if (opened.xml.length > 3_500_000) throw new ShareError("textTooBig");
     const files: SharedFile[] = [];
+    const unplayable: Record<string, number> = {};
+    const toConvert = opened.files.filter((f) => needsConversion(f.path)).length;
+    let converted = 0;
     for (const [i, f] of opened.files.entries()) {
-      const plain = await opened.read(f.path);
-      const dur = MEDIA_EXT.test(f.path) ? await durationOf(plain) : undefined;
+      let plain = await opened.read(f.path);
+      let mime: string | undefined;
+      if (needsConversion(f.path)) {
+        const show = (part: number) => onProgress({ progress: (converted + part) / toConvert, convert: { done: converted, total: toConvert } });
+        show(0);
+        const out = await toPlayable(plain, f.path, show);
+        converted++;
+        if (out) { plain = out.bytes; mime = out.mime; }
+        else { const ext = /\.(\w+)$/.exec(f.path)![1].toUpperCase(); unplayable[ext] = (unplayable[ext] ?? 0) + 1; }
+      }
+      const dur = mime || MEDIA_EXT.test(f.path) ? await durationOf(plain) : undefined;
       const key = crypto.getRandomValues(new Uint8Array(32));
       const iv = crypto.getRandomValues(new Uint8Array(12));
       const ck = await crypto.subtle.importKey("raw", key, "AES-GCM", false, ["encrypt"]);
@@ -129,13 +142,8 @@ export async function preparePack(file: File, onProgress: (p: number) => void): 
       whole.set(ct, 12);
       const hash = await sha256(whole);
       await store(hash, new Blob([whole]));
-      files.push({ path: f.path, size: whole.length, hash, key: toB64(key), ...(dur ? { dur } : {}) });
-      onProgress((i + 1) / opened.files.length);
-    }
-    const unplayable: Record<string, number> = {};
-    for (const f of files) {
-      const ext = DEAD_EXT.exec(f.path)?.[1].toUpperCase();
-      if (ext) unplayable[ext] = (unplayable[ext] ?? 0) + 1;
+      files.push({ path: f.path, size: whole.length, hash, key: toB64(key), ...(dur ? { dur } : {}), ...(mime ? { mime } : {}) });
+      if (!needsConversion(f.path)) onProgress({ progress: (i + 1) / opened.files.length });
     }
     return { xml: opened.xml, files, unplayable };
   } finally {

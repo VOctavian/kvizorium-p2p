@@ -64,4 +64,7 @@ export default defineConfig(({ mode }) => ({
     },
   },
   build: { outDir: "dist", emptyOutDir: true, chunkSizeWarningLimit: 900 },
+  // ffmpeg.wasm (converting WMV and the like) starts its own worker: Vite must leave it as it is.
+  optimizeDeps: { exclude: ["@ffmpeg/ffmpeg", "@ffmpeg/util"] },
+  worker: { format: "es" as const },
 }));

@@ -97,7 +97,7 @@ export function Lobby({ room }: { room: RoomView }) {
               <label className={`drop ${over ? "over" : ""}`}
                 onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)}
                 onDrop={(e) => { e.preventDefault(); setOver(false); upload(e.dataTransfer.files[0]); }}>
-                <span>{room.packLoading ? t.tx(room.packLoading) : progress != null ? L.sending(Math.round(progress * 100)) : t.dropSiq}</span>
+                <span>{room.packLoading ? t.tx(room.packLoading) : progress != null ? (uploading?.convert ? L.converting(uploading.convert.done + 1, uploading.convert.total, Math.round(progress * 100)) : L.sending(Math.round(progress * 100))) : t.dropSiq}</span>
                 <span className="btn ghost sm file-btn">{L.choosePack}<input type="file" accept=".siq,.zip" onChange={(e) => upload(e.target.files?.[0])} /></span>
                 {progress != null && <div className="progress"><i style={{ width: `${progress * 100}%` }} /></div>}
               </label>
