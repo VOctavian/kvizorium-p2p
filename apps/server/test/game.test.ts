@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import WebSocket from "ws";
-import { formatText, type ChatItem, type ClientMsg, type RoomView, type ServerMsg } from "@kvz/protocol";
+import { formatText, type ChatItem, type ClientMsg, type RoomSummary, type RoomView, type ServerMsg } from "@kvz/protocol";
 import { startServer } from "../src/index.ts";
 import { OFFLINE_GAME_MS, OFFLINE_LOBBY_MS, Room } from "@kvz/game";
 
@@ -1298,4 +1298,24 @@ test("point questions in a stake for everyone and in the final: judged by the sp
   assert.ok(!formatText("ru", fin.hostLine!).includes("0.2031"), "the host says the spot as people read it");
   assert.equal(fin.players.find((p) => p.id === ida)?.score, 700);
   a.close(); b.close();
+});
+
+test("the last one to leave with the button deletes the room at once", async () => {
+  const h = new Client("Один в лобби");
+  const w = new Client("Смотрит список");
+  await h.open(); await w.open();
+  h.send({ t: "createRoom", name: "Сразу пустая", settings: {}, asHost: true });
+  const r0 = await h.until((r) => !!r.id);
+  const listed = () => new Promise<RoomSummary[]>((ok) => {
+    const on = (raw: WebSocket.RawData) => { const m = JSON.parse(String(raw)) as ServerMsg; if (m.t === "rooms") { w.ws.off("message", on); ok(m.rooms); } };
+    w.ws.on("message", on);
+    w.send({ t: "listRooms" });
+  });
+  assert.ok((await listed()).some((x) => x.id === r0.id));
+  h.send({ t: "leaveRoom" });
+  await new Promise((ok) => setTimeout(ok, 200));
+  assert.ok(!(await listed()).some((x) => x.id === r0.id), "no waiting 5 minutes for an empty room");
+  h.send({ t: "joinRoom", roomId: r0.id });
+  assert.ok(await h.error(h.errors.length), "the code leads nowhere now");
+  h.close(); w.close();
 });

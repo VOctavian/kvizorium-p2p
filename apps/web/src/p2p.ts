@@ -693,7 +693,8 @@ function hubFor(g: Game): Hub {
   let soon: ReturnType<typeof setTimeout> | undefined;
   return {
     user: (id) => g.users.get(id),
-    roomsChanged: () => { if (!soon) soon = setTimeout(() => { soon = undefined; announce(g); }, 1000); },
+    // Not after the room is gone: a late announcement would put a deleted room back on the list.
+    roomsChanged: () => { if (!soon) soon = setTimeout(() => { soon = undefined; if (game === g && g.room) announce(g); }, 1000); },
   };
 }
 
@@ -949,6 +950,10 @@ async function saveCopy(g: Game) {
   const d = await db();
   try { d?.transaction("rooms", "readwrite").objectStore("rooms").put({ state, pack: g.pack, at: Date.now() } satisfies Copy, g.code); } catch { /* full or blocked */ }
 }
+async function dropCopy(code: string) {
+  const d = await db();
+  try { d?.transaction("rooms", "readwrite").objectStore("rooms").delete(code); } catch { /* blocked */ }
+}
 async function loadCopy(code: string): Promise<Copy | undefined> {
   const d = await db();
   if (!d) return undefined;
@@ -1022,7 +1027,8 @@ function leaveGame() {
     const self = g.users.get(me.id);
     if (self) g.room.leave(self);
     sendState(g);
-    if (!g.room.members.size) announce(g, true);
+    // The last one out: the room is deleted at once, from the list and from this browser's disk.
+    if (!g.room.members.size) { announce(g, true); void dropCopy(g.code); }
   } else if (g.keeper) toKeeper(g, { t: "leaveRoom" });
   localStorage.removeItem("kvz.p2p.current");
   // Let the last messages go out first.
@@ -1044,6 +1050,7 @@ function closeGame(g: Game) {
   for (const ws of boardSockets.values()) if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(["CLOSE", g.farSub]));
   setLink("ok");
   g.room?.dispose();
+  g.room = undefined;
   void g.mesh.leave();
   if (game === g) { game = undefined; localStorage.removeItem("kvz.p2p.current"); }
 }

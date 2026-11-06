@@ -206,6 +206,8 @@ export async function startServer(opts: ServerOptions = {}) {
       }
       case "leaveRoom": {
         room?.leave(user);
+        // The last one out with the button: nobody to wait for, the room goes at once.
+        if (room && !room.members.size) closeRoom(room.id, room, "все вышли");
         user.send({ t: "left" });
         return user.send({ t: "rooms", rooms: summaries() });
       }
