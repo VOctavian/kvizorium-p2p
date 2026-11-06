@@ -861,3 +861,35 @@ body { padding: 0; background: radial-gradient(120% 90% at 85% -10%, rgba(138,12
 .point-zone::after { content: ""; position: absolute; left: 50%; top: 50%; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; background: var(--mint); }
 .point-hint { color: var(--mint); font-weight: 600; font-size: 14px; text-align: center; }
 @keyframes pointPulse { 50% { transform: scale(1.3); } }
+
+/* ---------- connection marks ---------- */
+.link-dot { position: absolute; right: 5px; bottom: 5px; width: 11px; height: 11px; border-radius: 50%; box-shadow: 0 0 0 2px rgba(7,11,31,.85); z-index: 2; }
+.link-dot.l1 { background: var(--mint); }
+.link-dot.l2 { background: #ffd27a; }
+.link-dot.l3 { background: #ff9b6a; animation: link-blink 1.6s ease-in-out infinite; }
+@keyframes link-blink { 50% { opacity: .45; } }
+.slot b .link-dot, .person .link-dot { position: static; display: inline-block; width: 9px; height: 9px; margin-left: 7px; vertical-align: middle; box-shadow: none; }
+.person .link-dot { flex: none; margin: 0 4px; }
+.pic > .off { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; background: rgba(7,11,31,.65); font-size: 12px; font-weight: 700; color: var(--text-dim); text-align: center; z-index: 2; }
+.pic > .off small { font-size: 15px; font-variant-numeric: tabular-nums; color: #ff9b9b; font-weight: 800; }
+.link-banner { padding: 8px 14px; border-radius: 14px; font-size: 14px; font-weight: 600; text-align: center; margin-top: -6px; }
+.link-banner.lost { background: rgba(255,90,110,.16); border: 1px solid rgba(255,90,110,.45); color: #ffc2cb; }
+.link-banner.far { background: rgba(255,155,106,.12); border: 1px solid rgba(255,155,106,.4); color: #ffd9c4; }
+
+/* ---------- reactions ---------- */
+.main { position: relative; }
+.reaction-layer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 30; }
+.reaction { position: absolute; bottom: 8%; display: flex; flex-direction: column; align-items: center; transform: translateX(-50%); animation: react-fly 2.8s cubic-bezier(.2,.7,.3,1) forwards; }
+.reaction .emo { font-size: clamp(34px, 3.4vw, 54px); line-height: 1; filter: drop-shadow(0 4px 10px rgba(0,0,0,.45)); }
+.reaction small { font-size: 11px; font-weight: 700; color: var(--text); background: rgba(7,11,31,.6); padding: 1px 6px; border-radius: 8px; margin-top: 2px; white-space: nowrap; }
+@keyframes react-fly {
+  0% { transform: translate(-50%, 20px) scale(.4); opacity: 0; }
+  12% { transform: translate(-50%, 0) scale(1.1); opacity: 1; }
+  75% { opacity: 1; }
+  100% { transform: translate(-50%, -55vh) scale(.9); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) { .reaction { animation-duration: 1.6s; } }
+.react-bar { display: flex; gap: 4px; justify-content: space-between; }
+.react-bar button { flex: 1; font-size: 20px; line-height: 1; padding: 6px 0; border-radius: 10px; border: 1px solid var(--line); background: var(--glass-2); cursor: pointer; transition: transform .12s; }
+.react-bar button:hover:not(:disabled) { transform: translateY(-2px) scale(1.08); }
+.react-bar button:disabled { opacity: .45; cursor: default; }

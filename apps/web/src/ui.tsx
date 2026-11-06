@@ -1,7 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import type { MediaView, TimerView } from "@kvz/protocol";
-import { abs, getState } from "./net.ts";
+import { REACTIONS, type MediaView, type PersonView, type TimerView } from "@kvz/protocol";
+import { abs, getState, onReaction, send, useStore, type Reaction } from "./net.ts";
 import { mediaUrl, readyUrl, shareVersion, subscribeShare, whenReady } from "./share.ts";
 import { getPrefs } from "./prefs.ts";
 import { tr, useT } from "./i18n.ts";
@@ -587,4 +587,96 @@ export function toggleFullscreen() {
   if (window.kvz?.toggleFullscreen) return window.kvz.toggleFullscreen();
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   else document.documentElement.requestFullscreen?.().catch(() => {});
+}
+
+/* ---------- connection marks ---------- */
+
+/** "1:42" */
+export const mmss = (ms: number) => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+
+/**
+ * On a person's picture: while online, a dot for how the room reaches them (peer mode only:
+ * green directly, yellow through another player, orange through the relays); while away, a veil
+ * with the time left before the room lets them go.
+ */
+export function LinkMark({ p }: { p: PersonView }) {
+  const t = useT();
+  if (!p.online) return <AwayVeil goneAt={p.goneAt} />;
+  if (!p.link) return null;
+  const title = p.link === 1 ? t.link.direct : p.link === 2 ? t.link.relay : t.link.far;
+  return <span className={`link-dot l${p.link}`} title={title} aria-label={title} role="img" />;
+}
+
+function AwayVeil({ goneAt }: { goneAt?: number }) {
+  const t = useT();
+  const now = useNow(1000);
+  const left = goneAt != null ? goneAt - now : undefined;
+  return (
+    <span className="off" title={left != null ? t.link.awayTitle(mmss(left)) : t.link.reconnecting}>
+      <span>{t.offline}</span>
+      {left != null && <small>{left > 0 ? mmss(left) : t.link.leaving}</small>}
+    </span>
+  );
+}
+
+/** "Offline · 1:42" for lists. */
+export function AwayText({ p }: { p: PersonView }) {
+  const t = useT();
+  const now = useNow(1000);
+  const left = p.goneAt != null ? p.goneAt - now : undefined;
+  return <span title={left != null ? t.link.awayTitle(mmss(left)) : undefined}>{t.offline}{left != null ? ` · ${left > 0 ? mmss(left) : t.link.leaving}` : ""}</span>;
+}
+
+/** This browser's own way to its room, when it isn't the usual one. */
+export function LinkBanner() {
+  const link = useStore((s) => s.link);
+  const t = useT();
+  if (!link) return null;
+  return <div className={`link-banner ${link}`} role="status">{link === "lost" ? t.link.lost : t.link.farMe}</div>;
+}
+
+/* ---------- reactions ---------- */
+
+const MAX_FLYING = 24;
+/** Emoji flying up over the game, with who sent them. */
+export function ReactionLayer({ names }: { names: (id: string) => string | undefined }) {
+  const [flying, setFlying] = useState<(Reaction & { x: number })[]>([]);
+  const namesRef = useRef(names);
+  namesRef.current = names;
+  useEffect(() => onReaction((r) => {
+    const item = { ...r, x: 8 + Math.random() * 84 };
+    setFlying((f) => [...f.slice(-(MAX_FLYING - 1)), item]);
+    setTimeout(() => setFlying((f) => f.filter((x) => x.key !== r.key)), 2800);
+  }), []);
+  if (!flying.length) return null;
+  return (
+    <div className="reaction-layer" aria-hidden="true">
+      {flying.map((r) => (
+        <span key={r.key} className="reaction" style={{ left: `${r.x}%` }}>
+          <span className="emo">{r.e}</span><small>{namesRef.current(r.from)}</small>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** A row of reactions; the room lets through a few per person, so the buttons pause after a click. */
+export function ReactBar() {
+  const t = useT();
+  const [cool, setCool] = useState(false);
+  const recent = useRef<number[]>([]);
+  const fire = (e: string) => {
+    const now = Date.now();
+    recent.current = recent.current.filter((x) => now - x < 8000);
+    if (cool || recent.current.length >= 5) return;
+    recent.current.push(now);
+    send({ t: "react", e });
+    setCool(true);
+    setTimeout(() => setCool(false), recent.current.length >= 5 ? 8000 - (now - recent.current[0]) : 650);
+  };
+  return (
+    <div className="react-bar" role="group" aria-label={t.react.title}>
+      {REACTIONS.map((e) => <button key={e} type="button" disabled={cool} onClick={() => fire(e)} aria-label={t.react.send(e)} title={t.react.send(e)}>{e}</button>)}
+    </div>
+  );
 }

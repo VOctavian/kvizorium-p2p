@@ -6,7 +6,10 @@ import { usePrefs } from "../prefs.ts";
 import { playSound } from "../sounds.ts";
 import { VolumeChip } from "./Side.tsx";
 import { useHotkey } from "../hotkeys.ts";
-import { avatarSrc, HOST_AVATAR, Mic, PackName, toggleFullscreen, useDrainStyle } from "../ui.tsx";
+import { avatarSrc, HOST_AVATAR, LinkBanner, LinkMark, Mic, PackName, ReactionLayer, toggleFullscreen, useDrainStyle } from "../ui.tsx";
+
+/** Anyone's name in the room (for a reaction from someone who just left, nothing). */
+const nameIn = (room: RoomView, id: string) => (room.host?.id === id ? room.host : room.players.find((p) => p.id === id) ?? room.viewers.find((v) => v.id === id))?.name;
 import { Board, Final, Lobby, QuestionScreen, Results, RoundIntro, Secret, Stake, StakeAll } from "./phases.tsx";
 import { SidePanel } from "./Side.tsx";
 import { hasMenu, hostRights, isLeader, MoreButton, openPersonMenu, PersonMenu } from "./PersonMenu.tsx";
@@ -23,6 +26,8 @@ export function RoomScreen({ onProfile }: { onProfile: (p: Profile) => void }) {
     <div className={`stage ${dense ? "dense" : ""}`}>
       <div className="main">
         <Hud room={room} manage={manage} />
+        <LinkBanner />
+        <ReactionLayer names={(id) => nameIn(room, id)} />
         <div className="area">
           <Center room={room} />
         </div>
@@ -240,7 +245,7 @@ const PlayerCard = memo(function PlayerCard({ p, cls, state, isMe, menu, timer }
     <div className={`podium ${cls}`} onContextMenu={menu ? (e) => { e.preventDefault(); openPersonMenu(p.id, e.clientX, e.clientY); } : undefined}>
       <span className="flag">{t.room.answering}</span>
       {menu && <MoreButton id={p.id} label={t.menu.title(p.name)} className="on-card" />}
-      <span className="pic"><img src={avatarSrc(p)} alt="" />{!p.online && <span className="off">{t.offline}</span>}</span>
+      <span className="pic"><img src={avatarSrc(p)} alt="" /><LinkMark p={p} /></span>
       <span className="name" title={p.name}>{p.name}{isMe && <span className="you-tag">{t.you}</span>}</span>
       <span className={`score ${p.score < 0 ? "neg" : ""}`}>{p.score.toLocaleString(t.locale)}</span>
       <span className="state">{state}</span>
@@ -257,7 +262,7 @@ const HostCard = memo(function HostCard({ host, auto, line, meIsHost, canTake, m
     <div className="host-side" onContextMenu={menu && host ? (e) => { e.preventDefault(); openPersonMenu(host.id, e.clientX, e.clientY); } : undefined}>
       {menu && host && <MoreButton id={host.id} label={t.menu.title(host.name)} className="on-card" />}
       {canTake && <button className="btn sm take-host" onClick={() => send({ t: "takeHost" })}>{t.menu.takeHost}</button>}
-      <div className="pic"><img src={auto || !host ? HOST_AVATAR : avatarSrc(host)} alt="" /><Mic /></div>
+      <div className="pic"><img src={auto || !host ? HOST_AVATAR : avatarSrc(host)} alt="" /><Mic />{!auto && host && <LinkMark p={host} />}</div>
       <div className="who">
         <span className="role">{auto ? t.room.autoHost : t.room.host}</span>
         <b>{auto || !host ? t.appName : host.name}</b>

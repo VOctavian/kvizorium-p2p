@@ -12,6 +12,8 @@
  *   first brings the room back.
  * - Two browsers that can't connect directly (strict NATs) talk through a third one: every message
  *   is an envelope addressed to a person, passed on by whoever is connected to both.
+ * - Someone nobody can connect to at all plays through the relays themselves (the "spare route"):
+ *   slower, and without the media files, but in the game.
  */
 import { createEvent, joinRoom, subscribe as nostrSubscribe } from "trystero";
 import { buildSharedPack, errorMsg, handleRoomMsg, Room, type Hub, type LoadedPack, type PackHooks, type RoomSnapshot, type User } from "@kvz/game";
@@ -47,6 +49,20 @@ const ANNOUNCE_MS = 10_000;
 const REJOIN_MS = 15_000;
 /** A copy saved on disk can bring a room back for this long. */
 const SAVED_TTL = 24 * 3600_000;
+/**
+ * The spare route through the relays. A member with no direct way to the keeper for FAR_AFTER says
+ * "hi" over the relays every FAR_HI_MS, and the keeper answers; heard that way within FAR_TTL, a
+ * person can be reached that way. Messages go in batches (FAR_BATCH_MS, at least FAR_GAP apart),
+ * zipped, each event at most FAR_MAX characters.
+ */
+const FAR_AFTER = 5000;
+const FAR_HI_MS = 3000;
+const FAR_TTL = 12_000;
+const FAR_BATCH_MS = 120;
+const FAR_GAP = 300;
+const FAR_MAX = 32_000;
+/** Over the spare route, the room's full copy is asked for at most this often. */
+const FAR_STATE_MS = 20_000;
 
 /* ---------- who I am ---------- */
 
@@ -55,17 +71,22 @@ let deliver: (m: ServerMsg) => void = () => {};
 let notify: (t: Text) => void = () => {};
 let onDemoPack: (id: string) => void = () => {};
 let onAvatars: () => void = () => {};
+/** How this browser hears its room: fine, through the relays, or not at all for now. */
+export type LinkState = "ok" | "far" | "lost";
+let onLink: (s: LinkState) => void = () => {};
 let demoPacks: { id: string; name: string }[] = [];
 
 export function start(opts: {
   id: string; name: string; gender?: Gender; avatar?: string;
   deliver: (m: ServerMsg) => void; notify: (t: Text) => void; onDemoPack: (id: string) => void; onAvatars: () => void;
+  onLink?: (s: LinkState) => void;
 }) {
   me = { id: opts.id, name: opts.name, gender: opts.gender };
   deliver = opts.deliver;
   notify = opts.notify;
   onDemoPack = opts.onDemoPack;
   onAvatars = opts.onAvatars;
+  if (opts.onLink) onLink = opts.onLink;
   if (opts.avatar) void setMyAvatar(opts.avatar);
   openBoard();
   void fetch("packs/index.json").then((r) => (r.ok ? r.json() : []), () => []).then((list: { id: string; name: string }[]) => {
@@ -106,14 +127,17 @@ function connectBoard(url: string, attempt: number) {
   boardSockets.set(url, ws);
   ws.onopen = () => {
     attempt = 0;
-    ws.send(nostrSubscribe(`kvz${Math.random().toString(36).slice(2, 10)}`, BOARD_TOPIC));
+    ws.send(nostrSubscribe(`kvzb${Math.random().toString(36).slice(2, 10)}`, BOARD_TOPIC));
+    if (game) farSubscribe(game, ws);
     // A newcomer: whoever keeps a room, announce it now.
     void boardSend({ q: 1 }, ws);
   };
   ws.onmessage = (e) => {
     try {
       const m = JSON.parse(String(e.data));
-      if (m[0] === "EVENT" && typeof m[2]?.content === "string") onBoard(JSON.parse(m[2].content) as BoardMsg);
+      if (m[0] !== "EVENT" || typeof m[2]?.content !== "string") return;
+      if (game && m[1] === game.farSub) void onFar(game, m[2].content, String(m[2].id));
+      else if (String(m[1]).startsWith("kvzb")) onBoard(JSON.parse(m[2].content) as BoardMsg);
     } catch { /* not ours */ }
   };
   ws.onclose = () => {
@@ -275,7 +299,7 @@ interface PackData { hash: string; xml: string; files: SharedFile[] }
  * Everything in a room travels in envelopes addressed to a person (or to everyone): if two browsers
  * can't connect directly (strict NATs), the envelope goes through someone connected to both.
  */
-type Kind = "c2s" | "s2c" | "state" | "beat" | "pack" | "wantpack" | "wantstate" | "av" | "wantav";
+type Kind = "c2s" | "s2c" | "state" | "beat" | "pack" | "wantpack" | "wantstate" | "av" | "wantav" | "hi";
 interface Envelope { i: string; f: string; t: string; k: Kind; d: unknown; h: number }
 /** Who each person is directly connected to (and their names), from their reports. */
 interface Reach { at: number; links: Map<string, { n: string; g?: Gender }> }
@@ -309,6 +333,17 @@ interface Game {
   skip: Set<string>;
   expected?: { id: string; by: number };
   rejoinedAt: number;
+  openedAt: number;
+  /** The spare route: who was heard through the relays (and when), their names, what waits to go. */
+  far: Map<string, number>;
+  farNames: Map<string, { n: string; g?: Gender }>;
+  farSub: string;
+  farQ: Envelope[];
+  farTimer?: ReturnType<typeof setTimeout>;
+  farSentAt: number;
+  farSeen: Set<string>;
+  hiAt: number;
+  stateAskedAt: number;
 }
 let game: Game | undefined;
 
@@ -319,8 +354,10 @@ function openGame(code: string): Game {
   const g: Game = {
     code, mesh: undefined as unknown as Mesh, env: () => {}, hello: () => {}, reachOut: () => {}, peers: new Map(), reach: new Map(), seen: new Set(),
     term: 0, heardAt: Date.now(), users: new Map(), sentRev: -1, inRoom: false, queue: [], timers: [], skip: new Set(), rejoinedAt: Date.now(), sweptAt: 0,
+    openedAt: Date.now(), far: new Map(), farNames: new Map(), farSub: `kvzr${Math.random().toString(36).slice(2, 10)}`, farQ: [], farSentAt: 0, farSeen: new Set(), hiAt: 0, stateAskedAt: 0,
   };
   attachMesh(g);
+  farSubscribe(g);
   g.timers.push(setInterval(() => tick(g), 500));
   g.timers.push(setInterval(() => g.reachOut(), 3000));
   game = g;
@@ -350,7 +387,7 @@ function attachMesh(g: Game) {
     if (!p) return;
     g.reachOut();
     refreshOnline(g);
-    if (p.userId === g.keeper && !route(g, g.keeper)) elect(g);
+    if (p.userId === g.keeper && !canReach(g, g.keeper)) elect(g);
   };
 }
 
@@ -372,11 +409,22 @@ function route(g: Game, userId: string): string | undefined {
   return undefined;
 }
 
-/** Everyone this browser can get a message to. */
-function reachable(g: Game): Set<string> {
+/** Everyone this browser can get a message to through browsers (directly or one hop). */
+function meshReachable(g: Game): Set<string> {
   const out = new Set([me.id, ...[...g.peers.values()].map((p) => p.userId)]);
   const now = Date.now();
   for (const [via, r] of g.reach) if (now - r.at <= 10_000 && out.has(via)) for (const id of r.links.keys()) out.add(id);
+  return out;
+}
+
+/** Heard through the relays lately: can be reached that way. */
+const isFar = (g: Game, id: string) => Date.now() - (g.far.get(id) ?? 0) < FAR_TTL;
+const canReach = (g: Game, id: string) => !!route(g, id) || isFar(g, id);
+
+/** Everyone this browser can get a message to, the spare route included. */
+function reachable(g: Game): Set<string> {
+  const out = meshReachable(g);
+  for (const id of g.far.keys()) if (isFar(g, id)) out.add(id);
   return out;
 }
 
@@ -387,6 +435,90 @@ function post(g: Game, to: string, k: Kind, d: unknown) {
   if (to === "*") { g.env(e); return; }
   const peerId = route(g, to);
   if (peerId) g.env(e, peerId);
+  // No browser in between: through the relays (a whole pack is too big for that).
+  else if (isFar(g, to) && k !== "pack") farPost(g, e);
+}
+
+/* ---------- the spare route: through the relays ---------- */
+
+const roomTopic = (code: string) => `${APP_ID}/room/${code}`;
+
+function farSubscribe(g: Game, only?: WebSocket) {
+  for (const ws of only ? [only] : boardSockets.values()) if (ws.readyState === WebSocket.OPEN) ws.send(nostrSubscribe(g.farSub, roomTopic(g.code)));
+}
+
+function farPost(g: Game, e: Envelope) {
+  // Only the latest view of the room matters to each person.
+  if (e.k === "s2c" && (e.d as ServerMsg)?.t === "room") g.farQ = g.farQ.filter((x) => !(x.k === "s2c" && x.t === e.t && (x.d as ServerMsg)?.t === "room"));
+  g.farQ.push(e);
+  if (!g.farTimer) g.farTimer = setTimeout(() => void farFlush(g), Math.max(FAR_BATCH_MS, FAR_GAP - (Date.now() - g.farSentAt)));
+}
+
+async function farFlush(g: Game) {
+  g.farTimer = undefined;
+  const batch = g.farQ.splice(0);
+  if (!batch.length) return;
+  g.farSentAt = Date.now();
+  await farSend(g, batch);
+}
+
+async function farSend(g: Game, batch: Envelope[]): Promise<void> {
+  const body = await zipJson(batch);
+  if (body.length > FAR_MAX) {
+    if (batch.length === 1) { console.warn("[p2p] too big for the relays:", batch[0].k); return; }
+    const mid = batch.length >> 1;
+    await farSend(g, batch.slice(0, mid));
+    await farSend(g, batch.slice(mid));
+    return;
+  }
+  const ev = await createEvent(roomTopic(g.code), body);
+  for (const ws of boardSockets.values()) if (ws.readyState === WebSocket.OPEN) ws.send(ev);
+}
+
+async function onFar(g: Game, content: string, eventId: string) {
+  // The same event comes from every relay.
+  if (g.farSeen.has(eventId)) return;
+  g.farSeen.add(eventId);
+  if (g.farSeen.size > 2000) g.farSeen = new Set([...g.farSeen].slice(-500));
+  let list: Envelope[];
+  try { list = await unzipJson(content) as Envelope[]; } catch { return; }
+  if (game !== g || !Array.isArray(list)) return;
+  const now = Date.now();
+  for (const e of list) {
+    if (!e || typeof e.i !== "string" || typeof e.f !== "string" || e.f === me.id) continue;
+    g.far.set(e.f, now);
+    if (e.t !== me.id && e.t !== "*") continue;
+    if (g.seen.has(e.i)) continue;
+    g.seen.add(e.i);
+    dispatch(g, e.f, e.k, e.d);
+  }
+}
+
+/** No way to the keeper through browsers: "hi" through the relays (it answers the same way). */
+function sayHiFar(g: Game) {
+  g.hiAt = Date.now();
+  farPost(g, { i: `${me.id}.${++envSeq}`, f: me.id, t: "*", k: "hi", d: { n: me.name, g: me.gender, a: avVer.get(me.id) }, h: 0 });
+}
+
+function b64(buf: ArrayBuffer) {
+  const bytes = new Uint8Array(buf);
+  let out = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) out += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(out);
+}
+
+async function zipJson(v: unknown): Promise<string> {
+  const json = JSON.stringify(v);
+  if (typeof CompressionStream === "undefined") return JSON.stringify({ j: v });
+  const zipped = await new Response(new Blob([json]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer();
+  return JSON.stringify({ z: b64(zipped) });
+}
+
+async function unzipJson(content: string): Promise<unknown> {
+  const o = JSON.parse(content) as { z?: string; j?: unknown };
+  if (typeof o.z !== "string") return o.j;
+  const bytes = Uint8Array.from(atob(o.z), (c) => c.charCodeAt(0));
+  return JSON.parse(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).text());
 }
 
 function onEnvelope(g: Game, peerId: string, e: Envelope) {
@@ -421,6 +553,14 @@ function dispatch(g: Game, from: string, k: Kind, d: unknown) {
     case "wantpack": if (g.pack && g.pack.hash === (d as { hash: string })?.hash) post(g, from, "pack", g.pack); return;
     case "wantstate": if (g.room) sendState(g, from); return;
     case "av": return onAvatar(g, from, d as { u: string; v: string; d: string });
+    case "hi": {
+      const h = d as { n?: unknown; g?: Gender; a?: unknown };
+      g.farNames.set(from, { n: String(h?.n ?? "Игрок").slice(0, 24), g: h?.g === "m" || h?.g === "f" ? h.g : undefined });
+      knowVersion(g, from, typeof h?.a === "string" ? h.a : undefined, true);
+      // The keeper answers, so they know whom to talk to (and both know the other is still there).
+      if (g.room) { refreshOnline(g); post(g, from, "beat", { term: g.term, keeper: me.id, rev: g.room.rev }); }
+      return;
+    }
     case "wantav": {
       const id = (d as { u?: unknown })?.u;
       const a = typeof id === "string" ? avatars.get(id) : undefined;
@@ -452,23 +592,28 @@ function onReach(g: Game, peerId: string, d: { u: string; r: [string, string, Ge
   for (const [id, n, gen] of d.r) if (typeof id === "string") links.set(id, { n: String(n ?? "Игрок").slice(0, 24), g: gen });
   g.reach.set(d.u, { at: Date.now(), links });
   refreshOnline(g);
-  if (g.keeper && route(g, g.keeper)) keeperFound(g);
+  if (g.keeper && canReach(g, g.keeper)) keeperFound(g);
 }
 
 /** The keeper: who of the room's members can be reached right now. */
 function refreshOnline(g: Game) {
   if (!g.room) return;
-  const can = reachable(g);
+  const mesh = meshReachable(g);
   for (const r of g.reach.values()) for (const [id, n] of r.links) if (!g.users.has(id)) userFor(g, id, n.n, n.g);
   for (const p of g.peers.values()) userFor(g, p.userId, p.name, p.gender);
+  for (const [id, n] of g.farNames) if (!g.users.has(id) && isFar(g, id)) userFor(g, id, n.n, n.g);
   for (const u of g.users.values()) {
-    const online = can.has(u.id);
-    if (online === u.online) continue;
+    const link = u.id === me.id ? 1 : peerOf(g, u.id) ? 1 : mesh.has(u.id) ? 2 : isFar(g, u.id) ? 3 : undefined;
+    const online = u.id === me.id || link !== undefined;
+    if (online === u.online && link === u.link) continue;
+    const was = u.online;
     u.online = online;
+    u.link = link;
     if (!g.room.members.has(u.id)) continue;
-    // Back after a drop: rejoin quietly; gone: the room notices.
-    if (online) g.room.join(u);
-    else g.room.connectionChanged(u.id);
+    // Back after a drop: rejoin quietly; gone: the room notices; only the way changed: show it.
+    if (online && !was) g.room.join(u);
+    else if (!online && was) g.room.connectionChanged(u.id);
+    else g.room.changed();
   }
 }
 
@@ -492,6 +637,8 @@ function sendToUser(g: Game, userId: string, m: ServerMsg) {
 function nameOf(g: Game, userId: string): { n: string; g?: Gender } {
   for (const p of g.peers.values()) if (p.userId === userId) return { n: p.name, g: p.gender };
   for (const r of g.reach.values()) { const x = r.links.get(userId); if (x) return x; }
+  const far = g.farNames.get(userId);
+  if (far) return far;
   const u = g.users.get(userId);
   return { n: u?.name ?? "Игрок", g: u?.gender };
 }
@@ -572,8 +719,13 @@ function tick(g: Game) {
     if (now - lastSave > 5000) { lastSave = now; void saveCopy(g); }
     // Reports about who is connected go stale without a word: look again now and then.
     if (now - g.sweptAt > 2000) { g.sweptAt = now; refreshOnline(g); g.room.sweepOffline(now); }
+    setLink("ok");
     return;
   }
+  // No way to the keeper through browsers: keep in touch through the relays.
+  const direct = !!g.keeper && !!route(g, g.keeper);
+  if (!direct && now - g.openedAt > FAR_AFTER && now - g.hiAt > FAR_HI_MS) sayHiFar(g);
+  if (g.inRoom) setLink(direct ? "ok" : g.keeper && isFar(g, g.keeper) ? "far" : now - g.heardAt > 4000 ? "lost" : "ok");
   // No word from the keeper and no way to it: maybe the connection itself is stuck. Try again.
   if (g.keeper && !route(g, g.keeper) && now - g.heardAt > REJOIN_MS && now - g.rejoinedAt > REJOIN_MS) {
     g.rejoinedAt = now;
@@ -621,7 +773,9 @@ function onBeat(g: Game, b: { term: number; keeper: string; rev: number }, from:
   g.term = b.term;
   g.keeper = b.keeper;
   g.heardAt = Date.now();
-  if (!g.last || g.last.rev !== b.rev || g.last.keeper !== b.keeper) post(g, from, "wantstate", {});
+  // Over the relays the room's full copy is big: asked for now and then, not every change.
+  const stale = !g.last || g.last.rev !== b.rev || g.last.keeper !== b.keeper;
+  if (stale && (route(g, from) || Date.now() - g.stateAskedAt > FAR_STATE_MS)) { g.stateAskedAt = Date.now(); post(g, from, "wantstate", {}); }
   keeperFound(g);
 }
 
@@ -633,7 +787,7 @@ function onPack(g: Game, p: PackData) {
 
 /** The keeper can be reached: send what waited for it. */
 function keeperFound(g: Game) {
-  if (!g.keeper || !route(g, g.keeper)) return;
+  if (!g.keeper || !canReach(g, g.keeper)) return;
   if (g.joining) {
     clearTimeout(g.joining.timer);
     const { password, asViewer } = g.joining;
@@ -647,7 +801,7 @@ function keeperFound(g: Game) {
 
 function toKeeper(g: Game, m: ClientMsg) {
   if (g.room) return keeperHandle(g, userFor(g, me.id, me.name, me.gender), m);
-  if (!g.keeper || !route(g, g.keeper)) { g.queue.push(m); return; }
+  if (!g.keeper || !canReach(g, g.keeper)) { g.queue.push(m); return; }
   post(g, g.keeper, "c2s", m);
 }
 
@@ -830,9 +984,19 @@ function leaveGame() {
   game = undefined;
 }
 
+let linkNow: LinkState = "ok";
+function setLink(s: LinkState) {
+  if (s === linkNow) return;
+  linkNow = s;
+  onLink(s);
+}
+
 function closeGame(g: Game) {
   for (const t of g.timers) clearInterval(t);
   if (g.joining) clearTimeout(g.joining.timer);
+  if (g.farTimer) clearTimeout(g.farTimer);
+  for (const ws of boardSockets.values()) if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(["CLOSE", g.farSub]));
+  setLink("ok");
   g.room?.dispose();
   void g.mesh.leave();
   if (game === g) { game = undefined; localStorage.removeItem("kvz.p2p.current"); }

@@ -8,7 +8,7 @@ import { abs, send, sendPack, toast, useStore } from "../net.ts";
 import { SettingsForm, settingsSummary } from "../settings.tsx";
 import { hasMenu, hostRights, isLeader, MoreButton, openPersonMenu } from "./PersonMenu.tsx";
 import { preloadMedia } from "../ui.tsx";
-import { avatarSrc, coverGradient, FitText, HiddenCover, initials, Lock, MediaList, Modal, PackName, Seg, TimerBar, useGrowText, useNow, secondsLeft, type Playback, type PointLayer, type Reading } from "../ui.tsx";
+import { avatarSrc, AwayText, coverGradient, LinkMark, FitText, HiddenCover, initials, Lock, MediaList, Modal, PackName, Seg, TimerBar, useGrowText, useNow, secondsLeft, type Playback, type PointLayer, type Reading } from "../ui.tsx";
 
 const nameOf = (room: RoomView, id?: string) => room.players.find((p) => p.id === id)?.name ?? (room.host?.id === id ? room.host?.name : undefined) ?? tr().player;
 const isManager = isLeader;
@@ -140,8 +140,8 @@ export function Lobby({ room }: { room: RoomView }) {
             {room.host ? (
               <div className="slot host-slot" onContextMenu={hasMenu(room, room.host.id) ? (e) => { e.preventDefault(); openPersonMenu(room.host!.id, e.clientX, e.clientY); } : undefined}>
                 <img className="avatar" src={avatarSrc(room.host, false)} alt="" />
-                <b>{room.host.name}{room.host.id === room.me.id && <span className="you-tag">{t.you}</span>}</b>
-                <span className="right">{shareTag(room.host.id)}{room.host.online ? <span className="ready">{t.online}</span> : <span className="wait">{t.offline}</span>}
+                <b>{room.host.name}{room.host.id === room.me.id && <span className="you-tag">{t.you}</span>}{room.host.online && <LinkMark p={room.host} />}</b>
+                <span className="right">{shareTag(room.host.id)}{room.host.online ? <span className="ready">{t.online}</span> : <span className="wait"><AwayText p={room.host} /></span>}
                   {hasMenu(room, room.host.id) && <MoreButton id={room.host.id} label={t.menu.title(room.host.name)} />}</span>
               </div>
             ) : (
@@ -154,10 +154,10 @@ export function Lobby({ room }: { room: RoomView }) {
             {room.players.map((p) => (
               <div className="slot" key={p.id} onContextMenu={hasMenu(room, p.id) ? (e) => { e.preventDefault(); openPersonMenu(p.id, e.clientX, e.clientY); } : undefined}>
                 <img className="avatar" src={avatarSrc(p, false)} alt="" />
-                <b>{p.name}{p.id === room.me.id && <span className="you-tag">{t.you}</span>}{p.id === room.leaderId && <span className="leader-tag">{t.menu.leader}</span>}</b>
+                <b>{p.name}{p.id === room.me.id && <span className="you-tag">{t.you}</span>}{p.id === room.leaderId && <span className="leader-tag">{t.menu.leader}</span>}{p.online && <LinkMark p={p} />}</b>
                 <span className="right">
                   {shareTag(p.id)}
-                  {!p.online ? <span className="wait">{t.offline}</span> : p.ready ? <span className="ready">{L.ready(p.gender)}</span> : <span className="wait">{L.notReady(p.gender)}</span>}
+                  {!p.online ? <span className="wait"><AwayText p={p} /></span> : p.ready ? <span className="ready">{L.ready(p.gender)}</span> : <span className="wait">{L.notReady(p.gender)}</span>}
                   {hasMenu(room, p.id) && <MoreButton id={p.id} label={t.menu.title(p.name)} />}
                 </span>
               </div>
@@ -304,12 +304,12 @@ const shown = (a: string) => pointLabel(a) ?? a;
  * (the answering player, or a player of a question for everyone who hasn't handed in yet).
  */
 function usePointLayer(room: RoomView, canPick: boolean): PointLayer | undefined {
-  const q = room.question!;
+  const q = room.question;
   const [mine, setMine] = useState<{ x: number; y: number }>();
-  const key = `${q.themeIndex}:${q.index}:${q.answeringId ?? ""}`;
+  const key = q ? `${room.board?.index}:${q.themeIndex}:${q.index}:${q.answeringId ?? ""}` : "";
   useEffect(() => setMine(undefined), [key]);
   return useMemo(() => {
-    if (!q.point) return undefined;
+    if (!q?.point) return undefined;
     const names = new Map(room.players.map((p) => [p.id, p.name]));
     return {
       tries: q.point.tries.map((p) => ({ ...p, name: names.get(p.id) })),
@@ -318,7 +318,7 @@ function usePointLayer(room: RoomView, canPick: boolean): PointLayer | undefined
       mine: canPick || !mine || q.point.tries.some((p) => Math.abs(p.x - mine.x) < 0.002 && Math.abs(p.y - mine.y) < 0.002) ? undefined : mine,
       onPick: canPick ? (x: number, y: number, r: number) => { setMine({ x, y }); send({ t: "submit", text: pointToText({ x, y, r }) }); } : undefined,
     };
-  }, [q.point, q.stage, room.players, room.me.role, canPick, mine]);
+  }, [q?.point, q?.stage, room.players, room.me.role, canPick, mine]);
 }
 
 /** Sends what the player types, at most a few times per second. */
@@ -723,6 +723,9 @@ export function Final({ room }: { room: RoomView }) {
   const myTurn = f.turnId === room.me.id;
   const t = useT();
   const F = t.final;
+  // A final "find it on the picture": the finalist answers with a click.
+  const pickFinal = !!q?.point && inFinal && room.phase === "finalAnswer" && !f.answersDone.includes(room.me.id);
+  const point = usePointLayer(room, pickFinal);
 
   let body: React.ReactNode;
   if (room.phase === "finalThemes") {
@@ -751,20 +754,22 @@ export function Final({ room }: { room: RoomView }) {
     const done = f.answersDone.includes(room.me.id);
     body = (
       <>
-        {q && <div className="q-body"><MediaList items={q.content} /></div>}
-        {inFinal && !done ? (
+        {q && <div className="q-body"><MediaList items={q.content} point={point} /></div>}
+        {pickFinal && <div className="point-hint">{t.q.pointHint}</div>}
+        {inFinal && !done && !q?.point ? (
           <form className="answer-form" onSubmit={(e) => { e.preventDefault(); send({ t: "submit", text: answer }); }}>
             <input className="input" id="final-answer" autoFocus value={answer} maxLength={200} placeholder={F.yourAnswer} aria-label={F.answerLabel} onChange={(e) => { setAnswer(e.target.value); sendType(e.target.value); }} />
             <button className="btn primary" type="submit">{F.handIn}</button>
           </form>
-        ) : <Waiting room={room} done={f.answersDone} what={inFinal ? F.handedIn : F.writing} />}
+        ) : <Waiting room={room} done={f.answersDone} what={inFinal && done ? F.handedIn : F.writing} />}
       </>
     );
   } else {
     const judging = room.phase === "finalJudge";
     body = (
       <>
-        {q?.answer && <div className="reveal"><span className="eyebrow" style={{ margin: 0 }}>{t.q.correct}</span><b>{q.answer.text.join(" / ")}</b></div>}
+        {q?.answer && <div className="reveal"><span className="eyebrow" style={{ margin: 0 }}>{t.q.correct}</span><b>{q.point ? t.q.pointRight : q.answer.text.join(" / ")}</b></div>}
+        {q?.point && <div className="q-body"><MediaList items={q.content} point={point} /></div>}
         {f.answers ? (
           <div className="answers">
             {f.answers.map((a) => {
@@ -772,7 +777,7 @@ export function Final({ room }: { room: RoomView }) {
               return (
                 <div key={a.id} className={`answer-row ${a.correct == null ? "" : a.correct ? "good" : "bad"}`}>
                   <img className="avatar" src={p ? avatarSrc(p, false) : undefined} alt="" />
-                  <div className="txt"><b>{p?.name}</b>{a.stake != null && <span className="faint">{F.stake(a.stake)}</span>}<div>{t.q.quote(a.answer || "—")}</div></div>
+                  <div className="txt"><b>{p?.name}</b>{a.stake != null && <span className="faint">{F.stake(a.stake)}</span>}<div>{t.q.quote(a.answer ? shown(a.answer) : "—")}</div></div>
                   {judging && room.me.role === "host" ? (
                     <div className="row">
                       <button className="btn sm good" aria-pressed={a.correct === true} onClick={() => send({ t: "judge", correct: true, playerId: a.id })}>{t.right}</button>

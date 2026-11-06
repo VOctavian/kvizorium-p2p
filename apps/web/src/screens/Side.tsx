@@ -12,7 +12,7 @@ const HOST_KEY_ROWS: [keyof HostKeys, "keyRight" | "keyWrong" | "keyX2" | "keyZe
 import { MultButtons } from "../judge.tsx";
 import { ProfileForm } from "../profile.tsx";
 import { SettingsForm, settingsSummary } from "../settings.tsx";
-import { avatarSrc, coverGradient, HiddenCover, initials, PackName, Seg } from "../ui.tsx";
+import { avatarSrc, coverGradient, HiddenCover, initials, PackName, ReactBar, Seg } from "../ui.tsx";
 
 import { PeoplePanel } from "./PersonMenu.tsx";
 
@@ -135,6 +135,7 @@ const Chat = memo(function Chat({ viewers, canFix, voiceUrl }: { viewers: number
         {shown.length === 0 && <p className="chat-empty">{t.side.empty}</p>}
         {shown.map((m) => <ChatRow key={m.id} m={m} canFix={canFix} />)}
       </div>
+      <ReactBar />
       <form className="chat-input" onSubmit={(e) => {
         e.preventDefault();
         if (!text.trim()) return;

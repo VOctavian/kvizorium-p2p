@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { PersonView, RoomView } from "@kvz/protocol";
 import { useT } from "../i18n.ts";
 import { send } from "../net.ts";
-import { avatarSrc } from "../ui.tsx";
+import { avatarSrc, AwayText, LinkMark } from "../ui.tsx";
 
 /**
  * Context menu on any person in the room (host, player, viewer): right click or the "⋯" button.
@@ -42,6 +42,7 @@ function itemsFor(room: RoomView, person: PersonView, t: ReturnType<typeof useT>
   if (leader && !self) {
     if (isHost) out.push({ key: "unhost", label: M.removeHost, run: () => send({ t: "setHost", id: null }) });
     else out.push({ key: "host", label: room.host && player ? M.swapHost : M.makeHost, disabled: !person.online, run: () => send({ t: "setHost", id: person.id }) });
+    out.push({ key: "leader", label: M.makeLeader, disabled: !person.online, run: () => send({ t: "setLeader", id: person.id }) });
     if (player) out.push({ key: "free", label: M.freeSeat, run: () => send({ t: "freeSeat", id: person.id }) });
     out.push({ key: "kick", label: M.kick, danger: true, confirm: player ? M.kickConfirmSeat(person.name) : M.kickConfirm(person.name), run: () => send({ t: "kick", id: person.id }) });
     out.push({ key: "ban", label: M.ban, danger: true, confirm: M.banConfirm(person.name), run: () => send({ t: "ban", id: person.id }) });
@@ -128,7 +129,8 @@ export function PeoplePanel({ room }: { room: RoomView }) {
     <li key={p.id} className="person" onContextMenu={(e) => { e.preventDefault(); openPersonMenu(p.id, e.clientX, e.clientY); }}>
       <img src={avatarSrc(p, false)} alt="" />
       <span className="who"><b>{p.name}{p.id === room.me.id && <span className="you-tag">{t.you}</span>}</b>
-        <span className="note">{note}{p.id === room.leaderId ? ` · ${M.leader}` : ""}{p.online ? "" : ` · ${t.offline}`}</span></span>
+        <span className="note">{note}{p.id === room.leaderId ? ` · ${M.leader}` : ""}{p.online ? "" : <> · <AwayText p={p} /></>}</span></span>
+      {p.online && <LinkMark p={p} />}
       {hasMenu(room, p.id) && <MoreButton id={p.id} label={M.title(p.name)} />}
     </li>
   );

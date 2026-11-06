@@ -1187,3 +1187,115 @@ test("the host who leaves or is away 2 minutes frees the seat; anyone may take i
   assert.equal(room.leaderId(), "p", "whoever is still here leads");
   room.dispose();
 });
+
+test("the leader hands the room over; reactions are few per person; someone away shows when they'll go", () => {
+  const users = new Map<string, { id: string; name: string; online: boolean; link?: 1 | 2 | 3; send: (m: ServerMsg) => void; lastChat: number; token: string; roomId?: string }>();
+  const got = new Map<string, ServerMsg[]>();
+  const mk = (id: string) => {
+    got.set(id, []);
+    const u: { id: string; name: string; online: boolean; link?: 1 | 2 | 3; send: (m: ServerMsg) => void; lastChat: number; token: string } = { id, name: id, online: true, send: (m: ServerMsg) => { got.get(id)!.push(m); }, lastChat: 0, token: "" };
+    users.set(id, u);
+    return u;
+  };
+  const o = mk("o"), p = mk("p"), q = mk("q"), v = mk("v");
+  const room = new Room("LEAD", { user: (id) => users.get(id), roomsChanged: () => {} }, o, { name: "Лидер", settings: {}, asHost: false });
+  for (const u of [o, p, q]) room.join(u);
+  room.join(v, undefined, true);
+
+  // Leadership
+  assert.equal(room.leaderId(), "o");
+  assert.ok(room.setLeader("p", "q"), "only the leader hands it over");
+  assert.equal(room.setLeader("o", "q"), null);
+  assert.equal(room.leaderId(), "q", "the creator handed it over: no longer theirs while here");
+  assert.equal(room.view("p").leaderId, "q");
+  q.online = false;
+  assert.equal(room.leaderId(), "o", "the new leader away: back to the usual order");
+  q.online = true;
+  assert.equal(room.leaderId(), "q");
+  room.leave(q);
+  assert.equal(room.leaderId(), "o", "gone for good: the pick is forgotten");
+
+  // Reactions: to everyone online, at most one at a time per person, only the known ones.
+  room.react("v", "👏");
+  room.react("v", "😂");
+  room.react("v", "💩");
+  const reacts = (id: string) => got.get(id)!.filter((m) => m.t === "react");
+  assert.deepEqual(reacts("o"), [{ t: "react", from: "v", e: "👏" }]);
+  assert.equal(reacts("p").length, 1);
+  room.react("p", "🔥");
+  assert.equal(reacts("o").length, 2, "each person has their own allowance");
+
+  // Away: the countdown everyone sees; the way the room reaches someone online.
+  const t0 = Date.now();
+  p.online = false;
+  room.sweepOffline(t0);
+  const away = room.view("o").players.find((x) => x.id === "p")!;
+  assert.equal(away.online, false);
+  assert.equal(away.goneAt, t0 + OFFLINE_LOBBY_MS);
+  p.online = true;
+  p.link = 3;
+  room.sweepOffline(t0 + 1000);
+  const back = room.view("o").players.find((x) => x.id === "p")!;
+  assert.equal(back.goneAt, undefined);
+  assert.equal(back.link, 3);
+  room.dispose();
+});
+
+test("point questions in a stake for everyone and in the final: judged by the spot, everyone's clicks shown", async () => {
+  const a = new Client("Финал-точка А");
+  const b = new Client("Финал-точка Б");
+  await a.open(); await b.open();
+  a.send({ t: "createRoom", name: "Точки в финале", settings: { hostMode: "auto", chooseTime: 0 }, asHost: false });
+  const r0 = await a.until((r) => !!r.id);
+  b.send({ t: "joinRoom", roomId: r0.id });
+  await a.until((r) => r.players.length === 2);
+  a.send({ t: "useDemoPack", id: "test-all-types.siq" });
+  await a.until((r) => !!r.pack);
+  a.send({ t: "start" });
+  await a.until((r) => r.phase === "choosing", 10000);
+  const ida = a.room!.me.id, idb = b.room!.me.id;
+  a.send({ t: "setScore", id: ida, score: 500 });
+  a.send({ t: "setScore", id: idb, score: 500 });
+  a.send({ t: "setChooser", playerId: ida });
+  await a.until((r) => r.chooserId === ida && r.players.every((p) => p.score === 500));
+
+  // A stake for everyone, answered with a click.
+  a.send({ t: "choose", theme: 3, index: 5 });
+  await a.until((r) => r.phase === "stakeAll", 10000);
+  a.send({ t: "stakeAll", value: 100 });
+  b.send({ t: "stakeAll", value: 200 });
+  await a.until((r) => r.question?.stage === "open" && !!r.question.point, 15000);
+  a.send({ t: "submit", text: "треугольник" });
+  a.send({ t: "submit", text: "0.47,0.44,0.5625" });
+  b.send({ t: "submit", text: "0.9,0.1,0.5625" });
+  const rev = await b.until((r) => r.question?.stage === "reveal", 15000);
+  assert.equal(rev.question?.point?.tries.length, 2, "both clicks are on the picture at the reveal");
+  assert.equal(rev.players.find((p) => p.id === ida)?.score, 600);
+  assert.equal(rev.players.find((p) => p.id === idb)?.score, 300);
+
+  // The final, with the picture theme left.
+  a.send({ t: "setRound", index: 1 });
+  await a.until((r) => r.phase === "finalThemes", 10000);
+  for (let i = 0; i < 4 && a.room!.phase === "finalThemes"; i++) {
+    const f = a.room!.final!;
+    const idx = f.themes.findIndex((th) => !th.removed && th.name !== "Картинка");
+    const who = f.turnId === ida ? a : b;
+    const removed = f.themes.filter((th) => th.removed).length;
+    who.send({ t: "removeTheme", index: idx });
+    await a.until((r) => r.phase !== "finalThemes" || r.final!.themes.filter((th) => th.removed).length > removed, 10000);
+  }
+  await a.until((r) => r.phase === "finalStakes", 10000);
+  a.send({ t: "finalStake", value: 100 });
+  b.send({ t: "finalStake", value: 100 });
+  await a.until((r) => r.phase === "finalAnswer" && !!r.question?.point, 10000);
+  a.send({ t: "submit", text: "квадрат" });
+  a.send({ t: "submit", text: "0.21,0.37,0.5625" });
+  b.send({ t: "submit", text: "0.8,0.8,0.5625" });
+  const fin = await b.until((r) => r.phase === "finalReveal", 15000);
+  assert.deepEqual(fin.final?.answers?.map((x) => x.correct), [true, false].slice(0, fin.final!.answers!.length).map((_, i) => fin.final!.answers![i].id === ida));
+  assert.equal(fin.question?.point?.tries.length, 2, "everyone's spots at the final's reveal");
+  assert.deepEqual(fin.question?.point?.answer, { x: 0.2031, y: 0.3611, dev: 0.1 });
+  assert.ok(!formatText("ru", fin.hostLine!).includes("0.2031"), "the host says the spot as people read it");
+  assert.equal(fin.players.find((p) => p.id === ida)?.score, 700);
+  a.close(); b.close();
+});

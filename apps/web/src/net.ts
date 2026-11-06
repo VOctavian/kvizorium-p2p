@@ -24,6 +24,8 @@ export interface State {
   /** serverTime - localTime, ms */
   offset: number;
   toast?: { text: string; at: number; tone?: "bad" | "info" };
+  /** Peer mode: the room is heard only through the relays ("far"), or not at all for now ("lost"). */
+  link?: "far" | "lost";
   /** Pack upload in progress from this client. */
   upload?: { name: string; progress: number; convert?: { done: number; total: number } };
 }
@@ -190,6 +192,7 @@ export function connect() {
       mod.start({
         id: peerId(), name: profile.name, gender: profile.gender, avatar: profile.avatar,
         deliver: onMessage, notify: (t) => toast(tr().tx(t), "info"), onDemoPack: (id) => void useDemoPack(id), onAvatars: avatarsArrived,
+        onLink: (s) => set({ link: s === "ok" ? undefined : s }),
       });
       set({ status: "open" });
     });
@@ -265,10 +268,15 @@ function onMessage(raw: ServerMsg) {
     case "swarm": return void onSwarm(m);
     case "have": return onHave(m.from, m.files, m.reset);
     case "rtc": return void onRtc(m.from, m.data as Parameters<typeof onRtc>[1]);
+    case "react": {
+      const r: Reaction = { from: m.from, e: m.e, key: ++reactSeq };
+      reactionListeners.forEach((l) => l(r));
+      return;
+    }
     case "left":
       stopPreload();
       stopShare();
-      set({ room: undefined, chat: [] });
+      set({ room: undefined, chat: [], link: undefined });
       if (m.reason) toast(m.text ? tr().tx(m.text) : m.reason);
       return;
     case "chat": {
@@ -284,6 +292,12 @@ function onMessage(raw: ServerMsg) {
       return toast(m.text ? tr().tx(m.text) : m.message);
   }
 }
+
+/** Reactions fly by and are gone: they go to whoever listens now, not into the state. */
+export interface Reaction { from: string; e: string; key: number }
+let reactSeq = 0;
+const reactionListeners = new Set<(r: Reaction) => void>();
+export function onReaction(l: (r: Reaction) => void) { reactionListeners.add(l); return () => { reactionListeners.delete(l); }; }
 
 /** Showcase mode: a made-up room is shown and nothing is sent anywhere. */
 let preview = false;

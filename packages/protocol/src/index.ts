@@ -114,7 +114,17 @@ export interface PersonView {
   avatar?: string;
   online: boolean;
   gender?: Gender;
+  /**
+   * Peer mode: how the room reaches this person while online. 1 directly, 2 through another
+   * browser, 3 through the public relays (slow, no media). Missing: as good as direct.
+   */
+  link?: 1 | 2 | 3;
+  /** Offline: when (server clock, ms) the room lets them go. */
+  goneAt?: number;
 }
+
+/** Emoji anyone in a room can send flying over the screen. */
+export const REACTIONS = ["👏", "😂", "😱", "🔥", "🤔", "😭"] as const;
 
 export interface PlayerView extends PersonView {
   score: number;
@@ -435,7 +445,11 @@ export type ClientMsg =
   | { t: "setRound"; index: number }
   | { t: "setChooser"; playerId: string }
   | { t: "voice"; url: string | null }
-  | { t: "fixScore"; chatId: number; mult: Multiplier };
+  | { t: "fixScore"; chatId: number; mult: Multiplier }
+  /** Leader: hand the room to someone else here. */
+  | { t: "setLeader"; id: string }
+  /** One of REACTIONS. */
+  | { t: "react"; e: string };
 
 export type ServerMsg =
   | { t: "welcome"; you: { id: string; name: string; avatar?: string }; demoPacks: { id: string; name: string }[] }
@@ -457,6 +471,8 @@ export type ServerMsg =
   /** Someone has more files (`reset`: their whole list; empty when they left). */
   | { t: "have"; from: string; files: number[]; reset?: boolean }
   | { t: "rtc"; from: string; data: unknown }
+  /** Someone's reaction, to show for a moment. */
+  | { t: "react"; from: string; e: string }
   /** `message` is Russian (or raw text from the pack parser); `text` is the key a client renders. */
   | { t: "error"; message: string; text?: Text };
 

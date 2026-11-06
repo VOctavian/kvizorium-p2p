@@ -23,6 +23,7 @@ import {
   type TextParams,
   type TimerView,
   parsePoint,
+  REACTIONS,
   pointHits,
   pointLabel,
   POINT_DEVIATION,
@@ -39,6 +40,11 @@ export interface User {
   avatar?: string;
   gender?: "m" | "f";
   online: boolean;
+  /**
+   * Peer mode: how the room's keeper reaches this person. 1 directly, 2 through another browser,
+   * 3 through the public relays (slow, and no media files that way). The server leaves it out.
+   */
+  link?: 1 | 2 | 3;
   roomId?: string;
   lastChat: number;
   send(msg: ServerMsg): void;
@@ -139,12 +145,17 @@ const SAVED_FIELDS = [
   "name", "password", "settings", "ownerId", "hostId", "players", "viewers", "members", "phase", "paused", "roundIdx",
   "played", "chooserId", "roundEndsAt", "stake", "secret", "final", "hostLine", "chat", "emptySince", "createdAt", "voiceUrl",
   "startedAt", "packAlias", "chatSeq", "banned", "finalsPlayed", "packRevealed", "statsEntry", "lobbySince", "stakeAllParticipants", "leaving",
+  "leaderPick",
 ] as const;
 /** Extra seconds on a countdown after a restart, so people have time to reconnect. */
 const RESTORE_GRACE = 5;
 /** A player offline this long gives up their seat (see sweepOffline). */
 export const OFFLINE_LOBBY_MS = 30_000;
 export const OFFLINE_GAME_MS = 120_000;
+/** Reactions: at least REACT_GAP apart, at most REACT_MAX in REACT_WINDOW, per person. */
+const REACT_GAP = 600;
+const REACT_MAX = 5;
+const REACT_WINDOW = 8000;
 
 /** Seconds to wait for slow browsers to load a question's media. */
 const LOAD_WAIT = 8;
@@ -171,6 +182,8 @@ export class Room {
   password?: string;
   settings: Settings;
   ownerId: string;
+  /** Someone the leader handed the room to: leads while here. */
+  leaderPick?: string;
   hostId?: string;
   players: PlayerState[] = [];
   viewers = new Set<string>();
@@ -235,11 +248,38 @@ export class Room {
   /** The leader: the creator while here; otherwise the host, then the first player online. */
   leaderId(): string {
     const here = (id?: string) => !!id && this.members.has(id) && !!this.hub.user(id)?.online;
+    if (here(this.leaderPick)) return this.leaderPick!;
     if (here(this.ownerId)) return this.ownerId;
     if (here(this.hostId)) return this.hostId!;
     return this.players.find((p) => here(p.id))?.id ?? [...this.members].find((m) => here(m)) ?? this.ownerId;
   }
   isLeader(id: string) { return this.leaderId() === id; }
+
+  /** The leader hands the room to someone else here (it stays theirs while they're here, or until they hand it on). */
+  setLeader(by: string, id: string) {
+    if (!this.isLeader(by)) return tx("err.leaderOnly");
+    if (id === by || !this.members.has(id)) return null;
+    if (!this.hub.user(id)?.online) return tx("err.offline");
+    this.leaderPick = id;
+    this.feed("info", "ev.newLeader", { name: this.name_(id) });
+    this.changed();
+    return null;
+  }
+
+  private reactedAt = new Map<string, number[]>();
+  /** A quick emoji from anyone in the room, flying over everyone's screen. A few per person, not a flood. */
+  react(by: string, e: string) {
+    if (!(REACTIONS as readonly string[]).includes(e) || !this.members.has(by)) return;
+    const now = Date.now();
+    const recent = (this.reactedAt.get(by) ?? []).filter((t) => now - t < REACT_WINDOW);
+    if (recent.length >= REACT_MAX || now - (recent.at(-1) ?? 0) < REACT_GAP) return;
+    recent.push(now);
+    this.reactedAt.set(by, recent);
+    for (const id of this.members) {
+      const u = this.hub.user(id);
+      if (u?.online) u.send({ t: "react", from: by, e });
+    }
+  }
   /** `hostMode` only reports whether a person sits in the host's seat. */
   private syncHostMode() { this.settings.hostMode = this.hostId ? "human" : "auto"; }
   private banned = new Set<string>();
@@ -277,6 +317,7 @@ export class Room {
     this.vacateHost(user.id);
     this.viewers.delete(user.id);
     this.members.delete(user.id);
+    if (this.leaderPick === user.id) this.leaderPick = undefined;
     if (user.roomId === this.id) user.roomId = undefined;
     this.feed("info", kicked ? "ev.kicked" : "ev.left", { name: user.name });
     this.changed();
@@ -336,9 +377,9 @@ export class Room {
       const u = this.hub.user(id);
       if (u?.online) { this.offSince.delete(id); continue; }
       const since = this.offSince.get(id);
-      if (since == null) { this.offSince.set(id, now); continue; }
-      const limit = this.phase === "lobby" && this.isPlayer(id) ? OFFLINE_LOBBY_MS : OFFLINE_GAME_MS;
-      if (now - since < limit) continue;
+      // Seen offline for the first time: everyone sees the countdown from now on.
+      if (since == null) { this.offSince.set(id, now); changed = true; continue; }
+      if (now - since < this.offlineLimit(id)) continue;
       if (this.phase !== "lobby" && this.busyWith(id)) continue;
       this.offSince.delete(id);
       this.dropHave(id);
@@ -346,12 +387,15 @@ export class Room {
       this.vacateHost(id);
       this.viewers.delete(id);
       this.members.delete(id);
+      if (this.leaderPick === id) this.leaderPick = undefined;
       if (u && u.roomId === this.id) u.roomId = undefined;
       this.feed("info", "ev.left", { name: this.name_(id) });
       changed = true;
     }
     if (changed) this.changed();
   }
+
+  private offlineLimit(id: string) { return this.phase === "lobby" && this.isPlayer(id) ? OFFLINE_LOBBY_MS : OFFLINE_GAME_MS; }
 
   /** Someone's connection dropped or came back; a dropped browser no longer shares files. */
   connectionChanged(id?: string) {
@@ -866,7 +910,8 @@ export class Room {
   private loadWaiters() {
     const ids = this.players.map((p) => p.id);
     if (this.hostId) ids.push(this.hostId);
-    return ids.filter((id) => this.members.has(id) && this.hub.user(id)?.online);
+    // Someone reached only through the public relays gets no files: nobody waits for them.
+    return ids.filter((id) => this.members.has(id) && this.hub.user(id)?.online && this.hub.user(id)?.link !== 3);
   }
 
   private startReading() {
@@ -981,7 +1026,7 @@ export class Room {
     if (point) (q.pointTries ??= []).push({ id: by, x: point.x, y: point.y, correct: this.isRight(q.typed) });
     if (this.autoJudge() || this.packJudges()) this.applyJudgement(this.isRight(q.typed));
     else {
-      this.hostLine = tx("host.answers", { name: this.name_(by), answer: q.typed });
+      this.hostLine = tx("host.answers", { name: this.name_(by), answer: this.answerText(q.typed) });
       this.changed();
     }
   }
@@ -1503,6 +1548,7 @@ export class Room {
     if (!f || !f.participants.includes(by)) return;
     const cur = f.answers.get(by);
     if (cur?.done) return;
+    if (this.pointQ() && text && !parsePoint(text)) return;
     f.answers.set(by, { text: text.slice(0, 200), done });
     if (done) {
       this.feed("info", "ev.submitted", { name: this.name_(by) });
@@ -1515,8 +1561,8 @@ export class Room {
     const f = this.final!;
     this.clearTimer();
     this.phase = "finalJudge";
-    if (this.autoJudge()) {
-      for (const id of f.participants) f.judged.set(id, answerMatches(f.answers.get(id)?.text ?? "", this.q!.data.right));
+    if (this.autoJudge() || this.packJudges()) {
+      for (const id of f.participants) f.judged.set(id, this.isRight(f.answers.get(id)?.text ?? ""));
       return this.finalRevealPhase();
     }
     this.hostLine = tx("host.judging");
@@ -1539,11 +1585,12 @@ export class Room {
       const stake = f.stakes.get(id) ?? 1;
       const ok = !!f.judged.get(id);
       p.score += ok ? stake : -stake;
-      this.feed(ok ? "good" : "bad", "ev.answer", { name: this.name_(id), answer: f.answers.get(id)?.text, delta: ok ? stake : -stake }, { playerId: id, price: stake, delta: ok ? stake : -stake, correct: ok });
+      const given = f.answers.get(id)?.text;
+      this.feed(ok ? "good" : "bad", "ev.answer", { name: this.name_(id), answer: given && this.answerText(given), delta: ok ? stake : -stake }, { playerId: id, price: stake, delta: ok ? stake : -stake, correct: ok });
     }
     this.phase = "finalReveal";
     this.q!.stage = "reveal";
-    this.hostLine = tx("host.correct", { answer: this.q!.data.right[0] });
+    this.hostLine = tx("host.correct", { answer: this.answerText(this.q!.data.right[0] ?? "") });
     this.finalsPlayed++;
     this.setTimer("reveal", 8, "afterFinal");
     this.changed();
@@ -1737,7 +1784,7 @@ export class Room {
       const have = this.haves.get(id);
       return { id, have: have?.size ?? 0, firstRound: [...first].every((f) => have?.has(f)) };
     });
-    const online = (id: string) => !!this.hub.user(id)?.online && this.members.has(id);
+    const online = (id: string) => !!this.hub.user(id)?.online && this.members.has(id) && this.hub.user(id)?.link !== 3;
     return { total: shared.files.length, firstRound: first.size, people, ready: people.filter((p) => online(p.id)).every((p) => p.firstRound) };
   }
 
@@ -1849,7 +1896,9 @@ export class Room {
 
   private person(id: string) {
     const u = this.hub.user(id);
-    return { id, name: u?.name ?? "Игрок", avatar: u?.avatar, gender: u?.gender, online: !!u?.online && this.members.has(id) };
+    const online = !!u?.online && this.members.has(id);
+    const off = online ? undefined : this.offSince.get(id);
+    return { id, name: u?.name ?? "Игрок", avatar: u?.avatar, gender: u?.gender, online, link: online ? u?.link : undefined, goneAt: off != null ? off + this.offlineLimit(id) : undefined };
   }
 
   view(me: string): RoomView {
@@ -1926,6 +1975,13 @@ export class Room {
                   const pt = parsePoint(q.all!.get(p.id)?.text);
                   return pt ? [{ id: p.id, x: pt.x, y: pt.y, correct: q.allJudged!.get(p.id) }] : [];
                 }) : []),
+                // The final: everyone's spots once they're shown (to the host while judging).
+                ...(this.final && (this.phase === "finalReveal" || this.phase === "gameOver" || (isHost && this.phase === "finalJudge"))
+                  ? this.final.participants.flatMap((id) => {
+                      const pt = parsePoint(this.final!.answers.get(id)?.text);
+                      return pt ? [{ id, x: pt.x, y: pt.y, correct: this.final!.judged.get(id) }] : [];
+                    })
+                  : []),
               ],
               answer: isHost || reveal ? (() => { const r = this.rightPoints()[0]; return r && { x: r.x, y: r.y, dev: q.data.answerDeviation ?? POINT_DEVIATION }; })() : undefined,
             }

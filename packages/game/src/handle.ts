@@ -71,6 +71,8 @@ export function handleRoomMsg(room: Room, user: User, msg: ClientMsg, hooks: Pac
     case "setChooser": err(room.setChooser(user.id, msg.playerId)); return true;
     case "voice": err(room.setVoice(user.id, msg.url)); return true;
     case "fixScore": err(room.fixScore(user.id, msg.chatId, msg.mult)); return true;
+    case "setLeader": err(room.setLeader(user.id, msg.id)); return true;
+    case "react": room.react(user.id, msg.e); return true;
   }
   return false;
 }
