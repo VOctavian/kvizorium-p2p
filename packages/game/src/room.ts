@@ -237,7 +237,7 @@ export class Room {
     const here = (id?: string) => !!id && this.members.has(id) && !!this.hub.user(id)?.online;
     if (here(this.ownerId)) return this.ownerId;
     if (here(this.hostId)) return this.hostId!;
-    return this.players.find((p) => here(p.id))?.id ?? this.ownerId;
+    return this.players.find((p) => here(p.id))?.id ?? [...this.members].find((m) => here(m)) ?? this.ownerId;
   }
   isLeader(id: string) { return this.leaderId() === id; }
   /** `hostMode` only reports whether a person sits in the host's seat. */
@@ -274,6 +274,7 @@ export class Room {
   leave(user: User, kicked = false) {
     this.dropHave(user.id);
     this.standUp(user.id);
+    this.vacateHost(user.id);
     this.viewers.delete(user.id);
     this.members.delete(user.id);
     if (user.roomId === this.id) user.roomId = undefined;
@@ -292,6 +293,25 @@ export class Room {
     this.players = this.players.filter((p) => p.id !== id);
     if (this.chooserId === id) this.chooserId = this.players[0]?.id;
   }
+  /**
+   * The host left the room (or was away too long): the seat is free, and anyone may take it, whatever
+   * the room's setting was. Until then the game goes on with the automatic host, and an answer that
+   * waited for the host's word is checked against the pack.
+   */
+  private vacateHost(id: string) {
+    if (this.hostId !== id) return;
+    this.hostId = undefined;
+    this.syncHostMode();
+    this.settings.openHost = true;
+    this.feed("info", "ev.hostLeft", { name: this.name_(id) });
+    const q = this.q;
+    if (this.phase === "question" && q?.stage === "answering" && q.submitted && q.answeringId) this.applyJudgement(this.isRight(q.typed));
+    else if (this.phase === "question" && q?.stage === "judging" && q.all) {
+      for (const p of this.allAnswering()) if (!q.allJudged!.has(p.id)) q.allJudged!.set(p.id, this.isRight(q.all.get(p.id)?.text ?? ""));
+      this.forAllApply();
+    }
+  }
+
   /** Players who left while busy, waiting to stand up. */
   private leaving = new Set<string>();
   /** When each member was first seen offline. */
@@ -299,8 +319,9 @@ export class Room {
 
   /**
    * Called every few seconds by whoever keeps the room. Someone offline for long (a closed tab
-   * doesn't say goodbye) leaves the room, so their seat is free again: in the lobby after
-   * OFFLINE_LOBBY_MS, in a game after OFFLINE_GAME_MS. A reload or a short drop is well within that.
+   * doesn't say goodbye) leaves the room: a player's seat is free again, the host's seat too, and a
+   * viewer is off the list. A player waiting in the lobby goes after OFFLINE_LOBBY_MS, anyone else
+   * after OFFLINE_GAME_MS. A reload or a short drop is well within that.
    */
   sweepOffline(now = Date.now()) {
     let changed = false;
@@ -316,12 +337,14 @@ export class Room {
       if (u?.online) { this.offSince.delete(id); continue; }
       const since = this.offSince.get(id);
       if (since == null) { this.offSince.set(id, now); continue; }
-      // Only seats are freed this way: a host or a viewer who is away holds nothing up.
-      if (!this.isPlayer(id) || now - since < (this.phase === "lobby" ? OFFLINE_LOBBY_MS : OFFLINE_GAME_MS)) continue;
+      const limit = this.phase === "lobby" && this.isPlayer(id) ? OFFLINE_LOBBY_MS : OFFLINE_GAME_MS;
+      if (now - since < limit) continue;
       if (this.phase !== "lobby" && this.busyWith(id)) continue;
       this.offSince.delete(id);
       this.dropHave(id);
       this.standUp(id);
+      this.vacateHost(id);
+      this.viewers.delete(id);
       this.members.delete(id);
       if (u && u.roomId === this.id) u.roomId = undefined;
       this.feed("info", "ev.left", { name: this.name_(id) });

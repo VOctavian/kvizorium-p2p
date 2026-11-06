@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import WebSocket from "ws";
 import { formatText, type ChatItem, type ClientMsg, type RoomView, type ServerMsg } from "@kvz/protocol";
 import { startServer } from "../src/index.ts";
-import { OFFLINE_LOBBY_MS, Room } from "@kvz/game";
+import { OFFLINE_GAME_MS, OFFLINE_LOBBY_MS, Room } from "@kvz/game";
 
 let srv: Awaited<ReturnType<typeof startServer>>;
 before(async () => {
@@ -1144,4 +1144,46 @@ test("point questions: a click on the picture is judged by distance; the zone sh
   assert.deepEqual(hit.question?.point?.answer, { x: 0.75, y: 0.6944, dev: 0.09 });
   assert.equal(hit.question?.point?.tries.length, 2);
   a.close(); b.close();
+});
+
+test("the host who leaves or is away 2 minutes frees the seat; anyone may take it", async () => {
+  // Leaves with the button: off the seat at once, the automatic host carries on.
+  const h = new Client("Ведущий уходит");
+  const p = new Client("Игрок остаётся");
+  const v = new Client("Зритель садится");
+  for (const x of [h, p, v]) await x.open();
+  h.send({ t: "createRoom", name: "Уход ведущего", settings: { hostMode: "human", openHost: false }, asHost: true });
+  const r0 = await h.until((r) => !!r.id);
+  p.send({ t: "joinRoom", roomId: r0.id });
+  v.send({ t: "joinRoom", roomId: r0.id, asViewer: true });
+  await h.until((r) => r.players.length === 1 && r.viewers.length === 1);
+  const hid = h.room!.me.id;
+  h.send({ t: "leaveRoom" });
+  const after = await p.until((r) => !r.host && !r.viewers.some((x) => x.id === hid));
+  assert.equal(after.settings.hostMode, "auto");
+  assert.equal(after.settings.openHost, true, "the free seat is open to anyone");
+  v.send({ t: "takeHost" });
+  await p.until((r) => r.host?.id === v.room!.me.id);
+  for (const x of [h, p, v]) x.close();
+
+  // Away for 2 minutes: the keeper's sweep frees the seat and drops them from the room.
+  const users = new Map<string, { id: string; name: string; online: boolean; send: () => void; lastChat: number; token: string; roomId?: string }>();
+  const mk = (id: string) => { const u = { id, name: id, online: true, send: () => {}, lastChat: 0, token: "" }; users.set(id, u); return u; };
+  const host = mk("h"), pl = mk("p"), viewer = mk("v");
+  const room = new Room("HOST", { user: (id) => users.get(id), roomsChanged: () => {} }, host, { name: "Метла", settings: { hostMode: "human" }, asHost: true });
+  room.join(host, undefined, true);
+  room.join(pl);
+  room.join(viewer, undefined, true);
+  assert.equal(room.hostId, "h");
+  host.online = false;
+  viewer.online = false;
+  const t0 = Date.now();
+  room.sweepOffline(t0);
+  room.sweepOffline(t0 + OFFLINE_GAME_MS - 1000);
+  assert.equal(room.hostId, "h", "a short absence keeps the seat");
+  room.sweepOffline(t0 + OFFLINE_GAME_MS + 1);
+  assert.equal(room.hostId, undefined);
+  assert.ok(!room.members.has("h") && !room.members.has("v"), "the host and the viewer are gone from the room");
+  assert.equal(room.leaderId(), "p", "whoever is still here leads");
+  room.dispose();
 });
