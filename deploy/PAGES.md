@@ -44,6 +44,8 @@
 3. В репозитории: **Settings → Secrets and variables → Actions → Variables → New repository variable**, имя `VITE_TURN`, значение — эта ссылка.
 4. Запустите сборку заново (Actions → Pages → Run workflow).
 
+Сейчас на сайте подключён Metered: в `VITE_TURN` лежит список его серверов.
+
 Вместо ссылки можно указать сам список серверов в JSON: `[{"urls":"turn:host:3478","username":"…","credential":"…"}]` — подойдёт любой TURN, в том числе свой (coturn).
 
 Ключ окажется в коде сайта, его увидит любой. Чтобы его не тратили посторонние, у Metered можно ограничить доступ своим доменом и поставить лимит трафика. Для пробы в одном браузере: `localStorage.setItem("kvz.turn", "ссылка или JSON")` и перезагрузка.
