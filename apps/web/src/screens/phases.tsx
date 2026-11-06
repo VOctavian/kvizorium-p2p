@@ -3,12 +3,12 @@ import { keyLabel, useHotkey } from "../hotkeys.ts";
 import { MultButtons } from "../judge.tsx";
 import { usePrefs } from "../prefs.ts";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { type MediaView, type PlayerView, type RoomView, type TimerView } from "@kvz/protocol";
+import { pointLabel, pointToText, type MediaView, type PlayerView, type RoomView, type TimerView } from "@kvz/protocol";
 import { abs, send, sendPack, toast, useStore } from "../net.ts";
 import { SettingsForm, settingsSummary } from "../settings.tsx";
 import { hasMenu, hostRights, isLeader, MoreButton, openPersonMenu } from "./PersonMenu.tsx";
 import { preloadMedia } from "../ui.tsx";
-import { avatarSrc, coverGradient, FitText, HiddenCover, initials, Lock, MediaList, Modal, PackName, Seg, TimerBar, useGrowText, useNow, secondsLeft, type Playback, type Reading } from "../ui.tsx";
+import { avatarSrc, coverGradient, FitText, HiddenCover, initials, Lock, MediaList, Modal, PackName, Seg, TimerBar, useGrowText, useNow, secondsLeft, type Playback, type PointLayer, type Reading } from "../ui.tsx";
 
 const nameOf = (room: RoomView, id?: string) => room.players.find((p) => p.id === id)?.name ?? (room.host?.id === id ? room.host?.name : undefined) ?? tr().player;
 const isManager = isLeader;
@@ -290,11 +290,36 @@ function Secs({ timer }: { timer?: TimerView }) {
 }
 
 /** Question content; while it is being read, text goes karaoke and pictures appear line by line. */
-const QuestionBody = memo(function QuestionBody({ items, reading, playback }: { items: MediaView[]; reading?: Reading; playback: Playback }) {
+const QuestionBody = memo(function QuestionBody({ items, reading, playback, point }: { items: MediaView[]; reading?: Reading; playback: Playback; point?: PointLayer }) {
   const ref = useRef<HTMLDivElement>(null);
   useGrowText(ref, [items]);
-  return <div className="q-body" ref={ref}><MediaList items={items} reading={reading} playback={playback} /></div>;
+  return <div className="q-body" ref={ref}><MediaList items={items} reading={reading} playback={playback} point={point} /></div>;
 });
+
+/** "📍 39% · 82%" for a point answer, else the text as it is. */
+const shown = (a: string) => pointLabel(a) ?? a;
+
+/**
+ * Point question: what goes over the picture. A click answers when this browser may answer now
+ * (the answering player, or a player of a question for everyone who hasn't handed in yet).
+ */
+function usePointLayer(room: RoomView, canPick: boolean): PointLayer | undefined {
+  const q = room.question!;
+  const [mine, setMine] = useState<{ x: number; y: number }>();
+  const key = `${q.themeIndex}:${q.index}:${q.answeringId ?? ""}`;
+  useEffect(() => setMine(undefined), [key]);
+  return useMemo(() => {
+    if (!q.point) return undefined;
+    const names = new Map(room.players.map((p) => [p.id, p.name]));
+    return {
+      tries: q.point.tries.map((p) => ({ ...p, name: names.get(p.id) })),
+      answer: q.stage === "reveal" || room.me.role === "host" ? q.point.answer : undefined,
+      // My click until it's judged (then it is among the tries).
+      mine: canPick || !mine || q.point.tries.some((p) => Math.abs(p.x - mine.x) < 0.002 && Math.abs(p.y - mine.y) < 0.002) ? undefined : mine,
+      onPick: canPick ? (x: number, y: number, r: number) => { setMine({ x, y }); send({ t: "submit", text: pointToText({ x, y, r }) }); } : undefined,
+    };
+  }, [q.point, q.stage, room.players, room.me.role, canPick, mine]);
+}
 
 /** Sends what the player types, at most a few times per second. */
 function useThrottledType() {
@@ -370,6 +395,11 @@ export function QuestionScreen({ room }: { room: RoomView }) {
   useHotkey(prefs.passKey, pass, !!self);
 
   const answering = q.answeringId ? room.players.find((p) => p.id === q.answeringId) : undefined;
+  const everyone = q.kind === "forAll" || q.kind === "stakeAll";
+  const pickNow = !!q.point && (everyone
+    ? q.stage === "open" && !!self && !!q.forAll?.who.includes(self.id) && !q.forAll.done.includes(self.id)
+    : answeringMe && !q.submitted);
+  const point = usePointLayer(room, pickNow);
   return (
     <section className="screen fit">
       <div className={`question ${hostView ? "" : "solo"}`}>
@@ -381,15 +411,16 @@ export function QuestionScreen({ room }: { room: RoomView }) {
           </div>
           {q.loading ? (
             <div className="q-loading" role="status"><span className="spinner" aria-hidden="true" />{t.q.loading(q.loading.ready, q.loading.total)}</div>
-          ) : !(q.stage === "reveal" && q.answer?.content.length) && <QuestionBody items={q.content} reading={reading} playback={q.stage === "answering" || q.stage === "judging" ? "hold" : q.stage === "reveal" ? "keep" : "play"} />}
+          ) : !(q.stage === "reveal" && q.answer?.content.length) && <QuestionBody items={q.content} reading={reading} point={point} playback={q.stage === "answering" || q.stage === "judging" ? "hold" : q.stage === "reveal" ? "keep" : "play"} />}
+          {pickNow && <div className="point-hint">{t.q.pointHint}</div>}
           {q.options && q.kind !== "forAll" && q.kind !== "stakeAll" && <Options options={q.options} pick={answeringMe && !q.submitted ? (label) => send({ t: "submit", text: label }) : undefined} chosen={q.typed} />}
 
           {q.stage === "reveal" ? (
             <div className="reveal">
               {q.lastResult && <span className={`result ${q.lastResult.correct ? "good" : "bad"}`}>{nameOf(room, q.lastResult.playerId)}: {q.lastResult.correct ? t.q.resultRight : t.q.resultWrong} · {q.lastResult.delta > 0 ? "+" : ""}{q.lastResult.delta}</span>}
               <span className="eyebrow" style={{ margin: 0 }}>{t.q.correct}</span>
-              <b>{q.answer?.text[0] ?? "—"}</b>
-              {q.answer && q.answer.text.length > 1 && <span className="note">{t.q.alsoAccepted} {q.answer.text.slice(1).join(", ")}</span>}
+              <b>{q.point ? t.q.pointRight : q.answer?.text[0] ?? "—"}</b>
+              {q.answer && q.answer.text.length > 1 && !q.point && <span className="note">{t.q.alsoAccepted} {q.answer.text.slice(1).join(", ")}</span>}
               {q.answer && q.answer.content.length > 0 && <MediaList items={q.answer.content} big={false} />}
             </div>
           ) : q.stage !== "reading" ? (
@@ -402,13 +433,13 @@ export function QuestionScreen({ room }: { room: RoomView }) {
           {q.stage === "answering" && answering && (
             <div className="answer-banner">
               <img src={avatarSrc(answering)} alt="" />
-              <div style={{ minWidth: 0 }}><small>{t.q.answering}</small><b>{answering.name}</b>{q.typed && q.submitted && <div className="typed">{t.q.quote(q.typed)}</div>}</div>
+              <div style={{ minWidth: 0 }}><small>{t.q.answering}</small><b>{answering.name}</b>{q.typed && q.submitted && <div className="typed">{t.q.quote(shown(q.typed))}</div>}</div>
               <span className="sec"><Secs timer={room.timer} /></span>
             </div>
           )}
 
-          {answeringMe && oralLive && <div className="oral-hint">{t.q.oralHint}</div>}
-          {answeringMe && !q.submitted && !oralLive && !q.options && (
+          {answeringMe && oralLive && !q.point && <div className="oral-hint">{t.q.oralHint}</div>}
+          {answeringMe && !q.submitted && !oralLive && !q.options && !q.point && (
             <form className="answer-form" onSubmit={(e) => { e.preventDefault(); send({ t: "submit", text: answer }); }}>
               <input className="input" id="answer-input" autoFocus value={answer} maxLength={200} placeholder={room.settings.hostMode === "auto" ? t.q.yourAnswer : t.q.sayOrWrite} aria-label={t.q.yourAnswer}
                 onChange={(e) => { setAnswer(e.target.value); sendType(e.target.value); }} />
@@ -441,15 +472,15 @@ function HostPanel({ room }: { room: RoomView }) {
     <aside className="panel host-panel">
       <p className="eyebrow" style={{ margin: 0 }}>{t.q.panel}</p>
       {q.answer && (
-        <div className="answer"><div className="eyebrow" style={{ marginBottom: 4 }}>{t.q.correct}</div><p>{q.answer.text.join(" / ") || "—"}</p></div>
+        <div className="answer"><div className="eyebrow" style={{ marginBottom: 4 }}>{t.q.correct}</div><p>{q.point ? t.q.pointRight + " — " + q.answer.text.map(shown).join(" / ") : q.answer.text.join(" / ") || "—"}</p></div>
       )}
       {q.stage === "answering" && (
         <>
-          {room.settings.oral ? <div className="typed">{t.q.listen(nameOf(room, q.answeringId))}</div> : <div className="typed">{q.typed ? t.q.quote(q.typed) : <span className="faint">{t.q.nothingYet}</span>}</div>}
-          {human && !q.options && (
+          {room.settings.oral && !q.point ? <div className="typed">{t.q.listen(nameOf(room, q.answeringId))}</div> : <div className="typed">{q.typed ? t.q.quote(shown(q.typed)) : <span className="faint">{q.point ? t.q.pointWait : t.q.nothingYet}</span>}</div>}
+          {human && !q.options && !q.point && (
             <MultButtons onPick={(mult) => send({ t: "judge", correct: mult > 0, mult })} />
           )}
-          {q.options && <p className="note">{t.q.optionsAuto}</p>}
+          {(q.options || q.point) && <p className="note">{t.q.optionsAuto}</p>}
         </>
       )}
       {q.stage === "reading" && <button className="btn" onClick={() => send({ t: "host", action: "open" })}>{t.q.openButtons}</button>}
@@ -490,7 +521,10 @@ function ForAll({ room }: { room: RoomView }) {
       {q.stage === "open" && mine && !done && q.options && (
         <Options options={q.options} pick={(label) => send({ t: "submit", text: label })} />
       )}
-      {q.stage === "open" && mine && !done && !q.options && (
+      {q.stage === "open" && mine && !done && q.point && (
+        <div className="row"><button className="btn pass-btn" type="button" onClick={() => send({ t: "passQuestion" })}>{t.q.pass}</button></div>
+      )}
+      {q.stage === "open" && mine && !done && !q.options && !q.point && (
         <form className="answer-form" onSubmit={(e) => { e.preventDefault(); send({ t: "submit", text }); }}>
           <input className="input" id="forall-answer" autoFocus value={text} maxLength={200} placeholder={t.q.yourAnswer} aria-label={t.q.yourAnswer}
             onChange={(e) => { setText(e.target.value); sendType(e.target.value); }} />
@@ -512,7 +546,7 @@ function ForAll({ room }: { room: RoomView }) {
             return (
               <div key={a.id} className={`answer-row ${a.correct == null ? "" : a.correct ? "good" : "bad"}`}>
                 <img className="avatar" src={avatarSrc(p, false)} alt="" />
-                <div className="txt"><b>{p.name}</b>{a.stake != null && <span className="faint"> · {t.stakeAll.stake(a.stake)}</span>}<div>{a.answer ? t.q.quote(q.options?.find((o) => o.label === a.answer) ? `${a.answer}) ${q.options.find((o) => o.label === a.answer)!.text}` : a.answer) : <span className="faint">{t.q.noAnswer}</span>}</div></div>
+                <div className="txt"><b>{p.name}</b>{a.stake != null && <span className="faint"> · {t.stakeAll.stake(a.stake)}</span>}<div>{a.answer ? t.q.quote(q.options?.find((o) => o.label === a.answer) ? `${a.answer}) ${q.options.find((o) => o.label === a.answer)!.text}` : shown(a.answer)) : <span className="faint">{t.q.noAnswer}</span>}</div></div>
                 {a.delta != null && <span className={`result ${a.delta > 0 ? "good" : "bad"}`}>{a.delta > 0 ? "+" : a.delta < 0 ? "−" : ""}{Math.abs(a.delta)}</span>}
                 {judging && room.me.role === "host" && a.answer && (
                   <MultButtons current={a.correct == null ? undefined : a.correct ? 1 : -1} onPick={(mult) => send({ t: "judge", correct: mult > 0, playerId: a.id, mult })} />
@@ -522,7 +556,7 @@ function ForAll({ room }: { room: RoomView }) {
           })}
         </div>
       )}
-      {done && q.stage === "open" && <p className="dim" style={{ margin: 0 }}>{t.q.handedIn(f.myAnswer ?? "")}</p>}
+      {done && q.stage === "open" && <p className="dim" style={{ margin: 0 }}>{t.q.handedIn(shown(f.myAnswer ?? ""))}</p>}
     </div>
   );
 }

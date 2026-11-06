@@ -203,9 +203,15 @@ export const VARIANTS: Record<SoundEvent, Sound[]> = {
 
 /** Which variant plays by default (index into VARIANTS). */
 export const DEFAULT_SOUNDS: Record<SoundEvent, number> = {
-  open: 0, turn: 0, buzz: 0, good: 0, bad: 0, zero: 0, timeUp: 0,
-  secret: 0, auction: 0, noRisk: 0, stakeAll: 0, round: 0, final: 0, gameOver: 3,
+  open: 2, turn: 5, buzz: 4, good: 7, bad: 5, zero: 6, timeUp: 5,
+  secret: 4, auction: 3, noRisk: 3, stakeAll: 0, round: 0, final: 3, gameOver: 9,
 };
+
+/**
+ * The per-moment picker in Settings is hidden for now: everyone hears the defaults above, and
+ * choices saved earlier are not used. Set to true to bring the picker back.
+ */
+export const SOUND_PICKER = false;
 
 /* ---------- playing ---------- */
 
@@ -229,7 +235,7 @@ export function warmSounds() {
   try {
     const p = getPrefs();
     for (const ev of SOUND_EVENTS) {
-      const file = VARIANTS[ev][p.sounds?.[ev] ?? DEFAULT_SOUNDS[ev]]?.file;
+      const file = VARIANTS[ev][(SOUND_PICKER ? p.sounds?.[ev] : undefined) ?? DEFAULT_SOUNDS[ev]]?.file;
       if (file) { ctx ??= new AudioContext(); void bufferOf(ctx, file); }
     }
   } catch { /* audio unavailable */ }
@@ -238,7 +244,7 @@ export function warmSounds() {
 export function playSound(ev: SoundEvent, variant?: number) {
   const p = getPrefs();
   const vol = p.sfx;
-  const pick = variant ?? p.sounds?.[ev] ?? DEFAULT_SOUNDS[ev];
+  const pick = variant ?? (SOUND_PICKER ? p.sounds?.[ev] : undefined) ?? DEFAULT_SOUNDS[ev];
   const sound = VARIANTS[ev][pick];
   if (!vol || !sound) return;
   try {

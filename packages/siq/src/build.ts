@@ -24,8 +24,8 @@ export interface BuildPack {
         selectionMode?: "any" | "exceptCurrent";
         /** "Select" answer type: labelled options, the right answer is a label. */
         options?: { label: string; text: string }[];
-        /** "number" answers may be off by `answerDeviation`. */
-        answerType?: "text" | "number";
+        /** "number" answers may be off by `answerDeviation`; "point": the answer is "x,y,height/width" on the picture. */
+        answerType?: "text" | "number" | "point";
         answerDeviation?: number;
       }[];
     }[];

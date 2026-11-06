@@ -114,6 +114,8 @@ const testFiles: Record<string, Uint8Array | string> = {
   "Images/логотип теста.svg": svg(`<rect x="170" y="80" width="300" height="200" rx="30" fill="#43f0c4"/><text x="320" y="205" font-size="90" text-anchor="middle" font-family="sans-serif" font-weight="800" fill="#0f1638">ТЕСТ</text>`, "#0f1638"),
   "Images/марс.svg": files["Images/марс.svg"],
   "Images/флаг.svg": files["Images/флаг.svg"],
+  // Point questions: shapes to click. 640×360, so height/width = 0.5625.
+  "Images/фигуры.svg": svg(`<rect x="60" y="60" width="140" height="140" rx="16" fill="#ff74b3"/><circle cx="480" cy="250" r="55" fill="#43f0c4"/><path d="M300 70 L370 200 L230 200 Z" fill="#ffd27a"/><path d="M150 250 l14 30 32 4 -24 22 7 32 -29 -16 -29 16 7 -32 -24 -22 32 -4z" fill="#8a7bff"/>`, "#1a0f2a"),
   "Images/треугольник.svg": svg(`<path d="M320 60 L520 300 L120 300 Z" fill="#ff74b3"/>`, "#1a0f2a"),
   "Audio/пять нот.wav": melodyWav([523, 587, 659, 698, 784]),
   ...(video ? { "Video/планеты.webm": new Uint8Array(video) } : {}),
@@ -155,6 +157,8 @@ const allTypes: BuildPack = {
           { price: 200, type: "stakeAll", question: ["Ставка для всех: каждый со счётом больше нуля тайно ставит. В каком году основана Москва?"], answer: ["1147"] },
           { price: 300, type: "forAll", question: ["Вопрос для всех с вариантами. Сколько континентов на Земле?"], answer: ["C"], options: [{ label: "A", text: "Пять" }, { label: "B", text: "Шесть" }, { label: "C", text: "Семь" }, { label: "D", text: "Восемь" }] },
           { price: 400, question: ["Числовой ответ с погрешностью ±10. Сколько метров в километре?"], answer: ["1000"], answerType: "number", answerDeviation: 10 },
+          { price: 500, question: [{ type: "image", file: "фигуры.svg" }, "Ответ — место на картинке. Нажмите на зелёный круг."], answer: ["0.75,0.6944,0.5625"], answerType: "point", answerDeviation: 0.09 },
+          { price: 600, type: "forAll", question: [{ type: "image", file: "фигуры.svg" }, "Для всех: каждый нажимает на картинку. Где звезда?"], answer: ["0.2344,0.825,0.5625"], answerType: "point", answerDeviation: 0.08 },
         ] },
       ],
     },

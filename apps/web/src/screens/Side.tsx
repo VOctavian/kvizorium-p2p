@@ -4,7 +4,7 @@ import type { ChatItem, RoomView } from "@kvz/protocol";
 import { abs, send, useStore, type Profile } from "../net.ts";
 import { keyFromEvent, keyLabel } from "../hotkeys.ts";
 import { getPrefs, HOST_KEY_DEFAULTS, setPrefs, usePrefs, type HostKeys } from "../prefs.ts";
-import { DEFAULT_SOUNDS, playSound, SOUND_EVENTS, VARIANTS } from "../sounds.ts";
+import { DEFAULT_SOUNDS, playSound, SOUND_EVENTS, SOUND_PICKER, VARIANTS } from "../sounds.ts";
 
 const HOST_KEY_ROWS: [keyof HostKeys, "keyRight" | "keyWrong" | "keyX2" | "keyZero" | "keyHalf" | "keyMinus2" | "keyMinusHalf" | "keyAdvance"][] = [
   ["right", "keyRight"], ["wrong", "keyWrong"], ["x2", "keyX2"], ["half", "keyHalf"], ["zero", "keyZero"], ["minusHalf", "keyMinusHalf"], ["minus2", "keyMinus2"], ["advance", "keyAdvance"],
@@ -276,7 +276,7 @@ export function SettingsPanel({ bare }: { bare?: boolean }) {
             <Volume id="pref-sfx" value={p.sfx} onChange={(v) => setPrefs({ sfx: v })} onRelease={() => playSound("good")} /></div>
         </div>
       </section>
-      <section>
+      {SOUND_PICKER && <section>
         <p className="eyebrow">{s.signals}</p>
         <p className="note" style={{ margin: "0 0 8px" }}>{s.signalsNote} {s.recNote}</p>
         <div className="settings">
@@ -295,7 +295,7 @@ export function SettingsPanel({ bare }: { bare?: boolean }) {
             );
           })}
         </div>
-      </section>
+      </section>}
       <section>
         <p className="eyebrow">{s.screen}</p>
         <div className="settings">

@@ -849,3 +849,15 @@ body { padding: 0; background: radial-gradient(120% 90% at 85% -10%, rgba(138,12
 /* Sound variants in Settings */
 .sound-pick button { min-width: 34px; }
 .sound-pick button.rec { color: var(--mint); }
+
+/* Point questions: click the picture; marks and the right zone over it */
+.point-wrap { position: relative; display: inline-block; line-height: 0; max-width: 100%; }
+.point-wrap.pickable img { cursor: crosshair; outline: 2px dashed rgba(67, 240, 196, .7); outline-offset: 3px; }
+.point-mark { position: absolute; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; border: 3px solid #fff; background: var(--amber); box-shadow: 0 0 0 2px rgba(0,0,0,.45), 0 2px 8px rgba(0,0,0,.5); pointer-events: none; }
+.point-mark.good { background: var(--mint); }
+.point-mark.bad { background: var(--bad); }
+.point-mark.mine { background: var(--amber); animation: pointPulse 1s ease-in-out infinite; }
+.point-zone { position: absolute; aspect-ratio: 1; transform: translate(-50%, -50%); border-radius: 50%; border: 3px solid var(--mint); background: rgba(67, 240, 196, .18); box-shadow: 0 0 0 2px rgba(0,0,0,.4), 0 0 24px rgba(67, 240, 196, .6); pointer-events: none; }
+.point-zone::after { content: ""; position: absolute; left: 50%; top: 50%; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; background: var(--mint); }
+.point-hint { color: var(--mint); font-weight: 600; font-size: 14px; text-align: center; }
+@keyframes pointPulse { 50% { transform: scale(1.3); } }

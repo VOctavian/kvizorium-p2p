@@ -1104,3 +1104,44 @@ test("leaving frees the seat; someone gone for long gives it up too", async () =
   assert.ok(!room.members.has("p"));
   room.dispose();
 });
+
+test("point questions: a click on the picture is judged by distance; the zone shows at the reveal", async () => {
+  const a = new Client("Точка А");
+  const b = new Client("Точка Б");
+  await a.open(); await b.open();
+  a.send({ t: "createRoom", name: "Точки", settings: { hostMode: "auto", chooseTime: 0 }, asHost: false });
+  const r0 = await a.until((r) => !!r.id);
+  b.send({ t: "joinRoom", roomId: r0.id });
+  await a.until((r) => r.players.length === 2);
+  a.send({ t: "useDemoPack", id: "test-all-types.siq" });
+  await a.until((r) => !!r.pack);
+  a.send({ t: "start" });
+  await a.until((r) => r.phase === "choosing", 10000);
+  const ida = a.room!.me.id;
+  a.send({ t: "setChooser", playerId: ida });
+  await a.until((r) => r.chooserId === ida);
+  a.send({ t: "choose", theme: 3, index: 3 }); // green circle at 75% × 69%
+  const open = await b.until((r) => r.question?.stage === "open" && r.question.index === 3, 15000);
+  assert.ok(open.question?.point, "a point question says so");
+  assert.equal(open.question?.point?.answer, undefined, "players don't see the spot before the reveal");
+
+  // Too far: wrong, the click stays on the picture for everyone.
+  b.send({ t: "buzz" });
+  await b.until((r) => r.question?.answeringId === r.me.id);
+  b.send({ t: "submit", text: "Зелёный круг" });
+  b.send({ t: "submit", text: "0.2,0.3,0.5625" });
+  const miss = await a.until((r) => r.question?.lastResult?.correct === false);
+  assert.equal(miss.question?.point?.tries.length, 1, "text isn't an answer to a point question; the click is");
+  assert.equal(miss.question?.point?.tries[0].correct, false);
+
+  // Close enough (within 9% of the width): right.
+  await a.until((r) => r.question?.stage === "open");
+  a.send({ t: "buzz" });
+  await a.until((r) => r.question?.answeringId === r.me.id);
+  a.send({ t: "submit", text: "0.70,0.62,0.5625" });
+  const hit = await b.until((r) => r.question?.stage === "reveal" && r.question.index === 3);
+  assert.equal(hit.question?.lastResult?.correct, true);
+  assert.deepEqual(hit.question?.point?.answer, { x: 0.75, y: 0.6944, dev: 0.09 });
+  assert.equal(hit.question?.point?.tries.length, 2);
+  a.close(); b.close();
+});

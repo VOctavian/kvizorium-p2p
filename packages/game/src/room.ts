@@ -22,6 +22,10 @@ import {
   type TextKey,
   type TextParams,
   type TimerView,
+  parsePoint,
+  pointHits,
+  pointLabel,
+  POINT_DEVIATION,
 } from "@kvz/protocol";
 import type { LoadedPack } from "./pack.ts";
 
@@ -65,6 +69,8 @@ interface QState {
   passed?: Set<string>;
   /** Select questions: options already answered wrong. */
   wrongOptions?: Set<string>;
+  /** Point questions: clicks already judged. */
+  pointTries?: { id: string; x: number; y: number; correct: boolean }[];
   soloId?: string;
   openedAt?: number;
   thinkLeft?: number;
@@ -945,8 +951,11 @@ export class Room {
     if (this.q?.kind === "forAll" || this.q?.kind === "stakeAll") return this.forAllType(by, text, true);
     const q = this.q;
     if (!q || q.stage !== "answering" || q.answeringId !== by || q.submitted) return;
+    const point = this.pointQ() ? parsePoint(text) : undefined;
+    if (this.pointQ() && !point) return;
     q.typed = text.slice(0, 200);
     q.submitted = true;
+    if (point) (q.pointTries ??= []).push({ id: by, x: point.x, y: point.y, correct: this.isRight(q.typed) });
     if (this.autoJudge() || this.packJudges()) this.applyJudgement(this.isRight(q.typed));
     else {
       this.hostLine = tx("host.answers", { name: this.name_(by), answer: q.typed });
@@ -990,7 +999,7 @@ export class Room {
     if (p) p.score += delta;
     q.lastResult = { playerId: id, correct, delta, mult };
     if (mult === 0) (q.zero ??= new Set()).add(id);
-    this.feed(mult === 0 ? "info" : correct ? "good" : "bad", correct ? "ev.right" : "ev.wrong", { name: this.name_(id), answer: q.typed, delta },
+    this.feed(mult === 0 ? "info" : correct ? "good" : "bad", correct ? "ev.right" : "ev.wrong", { name: this.name_(id), answer: this.answerText(q.typed), delta },
       { playerId: id, price: q.price, delta, correct, mult });
     if (correct) {
       this.chooserId = id;
@@ -1017,12 +1026,22 @@ export class Room {
     this.changed();
   }
 
-  /** Select questions carry their answer in the pack: no host needed to check them. */
-  private packJudges() { return !!this.q?.data.answerOptions?.length; }
+  /** Select and point questions carry their answer in the pack: no host needed to check them. */
+  private packJudges() { return !!this.q?.data.answerOptions?.length || (this.pointQ() && this.rightPoints().length > 0); }
+
+  /** "Point" question: the answer is a spot on the picture. */
+  private pointQ() { return this.q?.data.answerType === "point"; }
+  private rightPoints() { return (this.q?.data.right ?? []).map((r) => parsePoint(r)).filter((p) => !!p); }
+  /** An answer as people read it ("📍 39% · 82%" for a point). */
+  private answerText(a: string) { return (this.pointQ() && pointLabel(a)) || a; }
 
   /** Answer check that also understands option labels ("B") of select questions. */
   private isRight(given: string): boolean {
     const q = this.q!;
+    if (q.data.answerType === "point") {
+      const g = parsePoint(given);
+      return !!g && this.rightPoints().some((r) => pointHits(g, r, q.data.answerDeviation ?? POINT_DEVIATION));
+    }
     if (q.data.answerType === "number") {
       const toNum = (s: string) => Number((/-?\d+(?:[.,]\d+)?/.exec(s)?.[0] ?? "").replace(",", "."));
       const g = toNum(given);
@@ -1086,6 +1105,7 @@ export class Room {
   private forAllType(by: string, text: string, done: boolean) {
     const q = this.q!;
     if (q.stage !== "open" || !q.all || !this.allAnswering().some((p) => p.id === by) || q.all.get(by)?.done) return;
+    if (this.pointQ() && text && !parsePoint(text)) return;
     q.all.set(by, { text: text.slice(0, 200), done });
     if (done) {
       this.feed("info", "ev.submitted", { name: this.name_(by) });
@@ -1136,7 +1156,7 @@ export class Room {
       const delta = m != null && m !== 1 && m !== -1 ? Math.round(price * m) : ok ? price : stake != null || this.settings.wrongPenalty ? -price : 0;
       p.score += delta;
       q.allDelta!.set(p.id, delta);
-      this.feed(ok ? "good" : "bad", "ev.answer", { name: this.name_(p.id), answer: q.all!.get(p.id)?.text ?? "", delta }, { playerId: p.id, price, delta, correct: ok, mult: m });
+      this.feed(ok ? "good" : "bad", "ev.answer", { name: this.name_(p.id), answer: this.answerText(q.all!.get(p.id)?.text ?? ""), delta }, { playerId: p.id, price, delta, correct: ok, mult: m });
     }
     this.reveal();
   }
@@ -1144,7 +1164,7 @@ export class Room {
   private noAnswer() {
     const q = this.q;
     if (!q) return;
-    this.feed("info", "ev.noAnswer", { answer: q.data.right[0] });
+    this.feed("info", "ev.noAnswer", { answer: this.answerText(q.data.right[0]) });
     this.reveal();
   }
 
@@ -1152,7 +1172,7 @@ export class Room {
     const q = this.q!;
     q.stage = "reveal";
     q.answeringId = undefined;
-    this.hostLine = tx("host.correct", { answer: q.data.right[0] });
+    this.hostLine = tx("host.correct", { answer: this.answerText(q.data.right[0]) });
     this.setTimer("reveal", q.data.answerContent.length ? 6 : 4, "afterQuestion");
     this.changed();
   }
@@ -1874,6 +1894,18 @@ export class Room {
         loading: q.loading ? { ready: (q.loadTotal ?? 0) - q.loading.size, total: q.loadTotal ?? 0 } : undefined,
         options: showQuestion && q.data.answerOptions?.length
           ? q.data.answerOptions.map((o) => ({ label: o.label, text: o.content.map((c) => c.value).join(" "), wrong: q.wrongOptions?.has(o.label) || undefined }))
+          : undefined,
+        point: q.data.answerType === "point" && showQuestion
+          ? {
+              tries: [
+                ...(q.pointTries ?? []).map(({ id, x, y, correct }) => ({ id, x, y, correct })),
+                ...(reveal && q.all ? this.allAnswering().flatMap((p) => {
+                  const pt = parsePoint(q.all!.get(p.id)?.text);
+                  return pt ? [{ id: p.id, x: pt.x, y: pt.y, correct: q.allJudged!.get(p.id) }] : [];
+                }) : []),
+              ],
+              answer: isHost || reveal ? (() => { const r = this.rightPoints()[0]; return r && { x: r.x, y: r.y, dev: q.data.answerDeviation ?? POINT_DEVIATION }; })() : undefined,
+            }
           : undefined,
         forAll: q.all
           ? {

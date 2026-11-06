@@ -3,6 +3,7 @@
 import { KIND_LABELS, type Text } from "./text.ts";
 
 export * from "./text.ts";
+export * from "./point.ts";
 
 export type Role = "host" | "player" | "viewer";
 export type HostMode = "human" | "auto";
@@ -182,6 +183,15 @@ export interface QuestionView {
   zeroIds?: string[];
   /** Answer choices for "select" questions; the answering player picks one by label. */
   options?: { label: string; text: string; wrong?: boolean }[];
+  /**
+   * "Point" questions: the answer is a spot on the picture, picked by clicking it (as "x,y,ratio",
+   * see point.ts). `tries`: clicks already judged; `answer`: the right spot and the allowance,
+   * for the host always and for everyone at the reveal.
+   */
+  point?: {
+    tries: { id: string; x: number; y: number; correct?: boolean }[];
+    answer?: { x: number; y: number; dev: number };
+  };
   /** "For everyone" questions: all players write an answer at once. */
   forAll?: {
     /** Players who answer (for "stakes for everyone" only those who staked). */

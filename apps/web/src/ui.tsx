@@ -212,8 +212,10 @@ function AutoMedia({ kind, src, mime, playback = "play" }: { kind: "audio" | "vi
  * Question content. `reading` turns on karaoke text and line-by-line pictures for the reading phase;
  * Sound and video have no controls for anyone: `playback` decides when they play.
  */
-export function MediaList({ items, big = true, reading, playback }: { items: MediaView[]; big?: boolean; reading?: Reading; playback?: Playback }) {
+export function MediaList({ items, big = true, reading, playback, point }: { items: MediaView[]; big?: boolean; reading?: Reading; playback?: Playback; point?: PointLayer }) {
   const t = useT();
+  // A point question is answered on its first picture.
+  const pointAt = point ? items.findIndex((m) => m.type === "image") : -1;
   // Next to a picture or video, text is a one-line caption so the media get the room.
   const caption = big && items.some((m) => m.type === "image" || m.type === "video");
   let at = reading?.startedAt ?? 0;
@@ -237,7 +239,8 @@ export function MediaList({ items, big = true, reading, playback }: { items: Med
             return <p key={key} className={big ? `q-text ${size}` : ""}>{reading?.karaoke ? <Karaoke text={t} start={start} speed={reading.speed} /> : t}</p>;
           }
           case "say": return <p key={key} className="q-say">{t.media.host} {reading?.karaoke ? <Karaoke text={m.text ?? ""} start={start} speed={reading.speed} /> : m.text}</p>;
-          case "image": return <div key={key} className="q-media visual"><WithSrc m={m}>{(src) => reading && reading.imageReveal > 0 ? <RevealImage src={src} start={start} seconds={reading.imageReveal} /> : <img src={src} alt={t.media.image} onLoad={keepAspect} />}</WithSrc></div>;
+          case "image": if (items[pointAt] === m && point) return <div key={key} className="q-media visual"><WithSrc m={m}>{(src) => <PointImage src={src} layer={point} />}</WithSrc></div>;
+            return <div key={key} className="q-media visual"><WithSrc m={m}>{(src) => reading && reading.imageReveal > 0 ? <RevealImage src={src} start={start} seconds={reading.imageReveal} /> : <img src={src} alt={t.media.image} onLoad={keepAspect} />}</WithSrc></div>;
           case "video": return <div key={key} className="q-media visual"><WithSrc m={m}>{(src) => <AutoMedia kind="video" src={src} mime={m.mime} playback={playback} />}</WithSrc></div>;
           case "audio": return <div key={key} className="q-media audio"><WithSrc m={m}>{(src) => <AutoMedia kind="audio" src={src} mime={m.mime} playback={playback} />}</WithSrc></div>;
           case "html": return <p key={key}><WithSrc m={m}>{(src) => <a href={src} target="_blank" rel="noreferrer">{t.media.html}</a>}</WithSrc></p>;
@@ -255,6 +258,53 @@ export function MediaList({ items, big = true, reading, playback }: { items: Med
     } else out.push(nodes[i]);
   }
   return <>{out}</>;
+}
+
+/** What a point question draws over its picture, and where a click goes. */
+export interface PointLayer {
+  /** Set while this browser may answer: called with shares of the width and height and height/width. */
+  onPick?: (x: number, y: number, ratio: number) => void;
+  tries: { id: string; x: number; y: number; correct?: boolean; name?: string }[];
+  /** The right spot and the allowance (share of the longer side). */
+  answer?: { x: number; y: number; dev: number };
+  /** This browser's click, before it's judged. */
+  mine?: { x: number; y: number };
+}
+
+/** A picture to click on (point questions), with the clicks and, at the reveal, the right zone. */
+function PointImage({ src, layer }: { src: string; layer: PointLayer }) {
+  const t = useT();
+  const [ratio, setRatio] = useState<number>();
+  const [picked, setPicked] = useState<{ x: number; y: number }>();
+  const canPick = !!layer.onPick;
+  // A new chance to answer starts clean; my click shows at once, until it comes back judged.
+  useEffect(() => { if (canPick) setPicked(undefined); }, [canPick]);
+  const mine = canPick ? picked : layer.mine;
+  const click = (e: React.MouseEvent<HTMLImageElement>) => {
+    if (!layer.onPick) return;
+    const box = e.currentTarget.getBoundingClientRect();
+    const x = Math.min(1, Math.max(0, (e.clientX - box.left) / box.width));
+    const y = Math.min(1, Math.max(0, (e.clientY - box.top) / box.height));
+    const img = e.currentTarget;
+    const r = img.naturalWidth && img.naturalHeight ? img.naturalHeight / img.naturalWidth : box.height / box.width;
+    setPicked({ x, y });
+    layer.onPick(x, y, r);
+  };
+  const r = ratio ?? 1;
+  const a = layer.answer;
+  return (
+    <span className={`point-wrap ${layer.onPick ? "pickable" : ""}`}>
+      <img src={src} alt={t.media.image} onLoad={(e) => { keepAspect(e); const i = e.currentTarget; if (i.naturalWidth) setRatio(i.naturalHeight / i.naturalWidth); }} onClick={click} draggable={false} />
+      {a && (
+        // The allowance is a share of the longer side: a circle in pixels, so in shares of the width it's dev × max(1, h/w).
+        <span className="point-zone" style={{ left: `${a.x * 100}%`, top: `${a.y * 100}%`, width: `${2 * a.dev * Math.max(1, r) * 100}%` }} aria-label={t.q.pointRight} />
+      )}
+      {layer.tries.map((p, i) => (
+        <span key={i} className={`point-mark ${p.correct ? "good" : p.correct === false ? "bad" : ""}`} style={{ left: `${p.x * 100}%`, top: `${p.y * 100}%` }} title={p.name} />
+      ))}
+      {mine && <span className="point-mark mine" style={{ left: `${mine.x * 100}%`, top: `${mine.y * 100}%` }} />}
+    </span>
+  );
 }
 
 /**
