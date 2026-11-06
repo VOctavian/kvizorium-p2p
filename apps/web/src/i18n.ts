@@ -425,7 +425,9 @@ const ru = {
     unmute: "Включить звук медиа",
     signals: "Сигналы по моментам",
     signalsNote: "Нажмите номер, чтобы послушать и выбрать вариант. Выбор хранится только в этом браузере.",
-    listen: "Послушать и выбрать",
+    listen: "послушать и выбрать",
+    made: "Синтез",
+    recNote: "1–4 — синтез в браузере, дальше — записанные звуки (джинглы, кот, фишки, аплодисменты).",
     events: {
       open: "Кнопки открыты", turn: "Ваш выбор вопроса", buzz: "Кто-то жмёт «Ответить»", good: "Верный ответ", bad: "Неверный ответ",
       zero: "0 очков", timeUp: "Время вышло, никто не ответил", secret: "Кот в мешке", auction: "Аукцион (ставки)", noRisk: "Вопрос без риска",
@@ -1064,7 +1066,9 @@ const en: Dict = {
     unmute: "Unmute media",
     signals: "Signals by moment",
     signalsNote: "Click a number to hear and pick a variant. Your choice stays in this browser.",
-    listen: "Listen and pick",
+    listen: "listen and pick",
+    made: "Synth",
+    recNote: "1–4 are made in the browser; the rest are recordings (jingles, a cat, chips, applause).",
     events: {
       open: "Buttons open", turn: "Your pick", buzz: "Someone presses Answer", good: "Right answer", bad: "Wrong answer",
       zero: "Zero points", timeUp: "Time's up, nobody answered", secret: "Cat in the bag", auction: "Auction (stakes)", noRisk: "No-risk question",

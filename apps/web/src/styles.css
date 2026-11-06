@@ -848,3 +848,4 @@ body { padding: 0; background: radial-gradient(120% 90% at 85% -10%, rgba(138,12
 @media (max-width: 700px) { .vol-chip input[type=range] { width: 52px; } }
 /* Sound variants in Settings */
 .sound-pick button { min-width: 34px; }
+.sound-pick button.rec { color: var(--mint); }

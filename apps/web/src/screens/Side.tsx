@@ -278,7 +278,7 @@ export function SettingsPanel({ bare }: { bare?: boolean }) {
       </section>
       <section>
         <p className="eyebrow">{s.signals}</p>
-        <p className="note" style={{ margin: "0 0 8px" }}>{s.signalsNote}</p>
+        <p className="note" style={{ margin: "0 0 8px" }}>{s.signalsNote} {s.recNote}</p>
         <div className="settings">
           {SOUND_EVENTS.map((ev) => {
             const cur = p.sounds?.[ev] ?? DEFAULT_SOUNDS[ev];
@@ -286,8 +286,8 @@ export function SettingsPanel({ bare }: { bare?: boolean }) {
             return (
               <div className="setting" key={ev}><span><span className="setting-label">{s.events[ev]}</span></span>
                 <div className="seg sound-pick" role="radiogroup" aria-label={s.events[ev]}>
-                  {VARIANTS[ev].map((_, i) => (
-                    <button key={i} type="button" role="radio" aria-checked={cur === i} className={cur === i ? "on" : ""} title={s.listen} onClick={() => pick(i)}>{i + 1}</button>
+                  {VARIANTS[ev].map((v, i) => (
+                    <button key={i} type="button" role="radio" aria-checked={cur === i} className={v.file ? "rec" : ""} title={`${v.name ?? s.made} — ${s.listen}`} onClick={() => pick(i)}>{i + 1}</button>
                   ))}
                   <button type="button" role="radio" aria-checked={cur === -1} className={cur === -1 ? "on" : ""} onClick={() => pick(-1)}>{s.off}</button>
                 </div>

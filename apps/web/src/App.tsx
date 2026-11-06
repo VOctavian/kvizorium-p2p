@@ -7,6 +7,7 @@ import { Showcase } from "./screens/Showcase.tsx";
 import { SettingsPanel } from "./screens/Side.tsx";
 import { Modal } from "./ui.tsx";
 import { useT } from "./i18n.ts";
+import { warmSounds } from "./sounds.ts";
 
 export function App() {
   const inRoom = useStore((s) => !!s.room);
@@ -14,6 +15,7 @@ export function App() {
   const [modal, setModal] = useState<"profile" | "settings" | null>(null);
   const t = useT();
   useEffect(() => { document.title = t.appName; }, [t]);
+  useEffect(() => { const id = setTimeout(warmSounds, 3000); return () => clearTimeout(id); }, []);
 
   if (location.hash === "#showcase") return <Showcase />;
   if (!profile) return <Welcome onDone={(p) => { setProfile(p); connect(); }} />;
