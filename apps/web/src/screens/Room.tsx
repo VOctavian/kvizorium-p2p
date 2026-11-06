@@ -2,7 +2,9 @@ import { useT, type T } from "../i18n.ts";
 import { memo, useEffect, useRef, useState } from "react";
 import type { Multiplier, PlayerView, QuestionView, RoomView, TimerView } from "@kvz/protocol";
 import { send, toast, useStore, type Profile } from "../net.ts";
-import { signal, usePrefs } from "../prefs.ts";
+import { usePrefs } from "../prefs.ts";
+import { playSound } from "../sounds.ts";
+import { VolumeChip } from "./Side.tsx";
 import { useHotkey } from "../hotkeys.ts";
 import { avatarSrc, HOST_AVATAR, Mic, PackName, toggleFullscreen, useDrainStyle } from "../ui.tsx";
 import { Board, Final, Lobby, QuestionScreen, Results, RoundIntro, Secret, Stake, StakeAll } from "./phases.tsx";
@@ -57,19 +59,33 @@ function useHostKeys(room?: RoomView) {
   useHotkey(k.advance, () => send({ t: "host", action: "advance" }), on);
 }
 
-/** Short sounds for the moments a player shouldn't miss. */
+/** Short sounds for the moments of the game (which one plays for each is picked in Settings). */
 function useGameSignals(room?: RoomView) {
-  const prev = useRef<{ stage?: string; myTurn?: boolean; result?: string }>({});
+  const prev = useRef<{ phase?: string; stage?: string; qkey?: string; myTurn?: boolean; result?: string; round?: number }>({});
   useEffect(() => {
     if (!room) return;
     const q = room.question;
-    const myTurn = room.phase === "choosing" && room.chooserId === room.me.id;
-    const result = q?.lastResult ? `${q.themeIndex}:${q.index}:${q.lastResult.playerId}:${q.lastResult.delta}` : undefined;
     const p = prev.current;
-    if (q?.stage === "open" && p.stage !== "open" && q.kind !== "forAll" && room.me.role === "player") signal("open");
-    if (myTurn && !p.myTurn) signal("turn");
-    if (result && result !== p.result && q?.lastResult) signal(q.lastResult.correct ? "good" : "bad");
-    prev.current = { stage: q?.stage, myTurn, result };
+    const first = p.phase === undefined;
+    const myTurn = room.phase === "choosing" && room.chooserId === room.me.id;
+    const qkey = q ? `${room.board?.index}:${q.themeIndex}:${q.index}` : undefined;
+    const result = q?.lastResult ? `${qkey}:${q.lastResult.playerId}:${q.lastResult.delta}` : undefined;
+    const round = room.board?.index;
+    prev.current = { phase: room.phase, stage: q?.stage, qkey, myTurn, result, round };
+    // Joining in the middle: nothing to announce yet.
+    if (first) return;
+    const entered = (ph: string) => room.phase === ph && p.phase !== ph;
+    if (entered("gameOver")) return playSound("gameOver");
+    if (entered("secret")) return playSound("secret");
+    if (entered("stake")) return playSound("auction");
+    if (entered("stakeAll")) return playSound("stakeAll");
+    if ((entered("roundIntro") || entered("finalThemes")) && round !== undefined && (round !== p.round || p.phase === "lobby")) return playSound(room.board?.final ? "final" : "round");
+    if (q && qkey !== p.qkey && q.kind === "noRisk") return playSound("noRisk");
+    if (result && result !== p.result && q?.lastResult) return playSound(q.lastResult.correct ? "good" : q.lastResult.delta === 0 ? "zero" : "bad");
+    if (q && qkey === p.qkey && q.stage === "reveal" && p.stage === "open" && !q.lastResult) return playSound("timeUp");
+    if (q && qkey === p.qkey && q.stage === "answering" && p.stage === "open") return playSound("buzz");
+    if (q?.stage === "open" && (p.stage !== "open" || qkey !== p.qkey) && q.kind !== "forAll" && q.kind !== "stakeAll" && room.me.role === "player") return playSound("open");
+    if (myTurn && !p.myTurn) return playSound("turn");
   }, [room]);
 }
 
@@ -112,6 +128,7 @@ function Hud({ room, manage }: { room: RoomView; manage: boolean }) {
       {manage && inGame && (
         <button className={`chip ${room.paused ? "warn" : ""}`} onClick={() => send({ t: "host", action: room.paused ? "resume" : "pause" })}>{room.paused ? t.resume : t.pause}</button>
       )}
+      <VolumeChip />
       <button className="chip" onClick={toggleFullscreen} title={t.fullscreenHint} aria-label={t.fullscreen}>⛶</button>
       <button className="chip" onClick={() => send({ t: "leaveRoom" })}>{t.room.leave}</button>
     </header>

@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import type { SoundEvent } from "./sounds.ts";
 
 /** Per-device preferences: they never leave this browser. */
 export interface Prefs {
@@ -7,6 +8,8 @@ export interface Prefs {
   volume: number;
   /** Interface signals (buttons open, your turn, right/wrong), 0..1 */
   sfx: number;
+  /** Which variant each game signal plays (see sounds.ts); -1 = off. */
+  sounds?: Partial<Record<SoundEvent, number>>;
   /** Graphics level: fewer animations, normal, frosted glass. */
   fx: "low" | "mid" | "high";
   motion: "full" | "reduced";
@@ -56,37 +59,4 @@ export function setPrefs(patch: Partial<Prefs>) {
 }
 export function usePrefs(): Prefs {
   return useSyncExternalStore((l) => (listeners.add(l), () => { listeners.delete(l); }), () => prefs);
-}
-
-/* ---------- interface signals (Web Audio, no files) ---------- */
-
-let ctx: AudioContext | undefined;
-const TUNES: Record<string, [number, number][]> = {
-  open: [[880, 0.09]],
-  turn: [[660, 0.1], [880, 0.14]],
-  good: [[523, 0.09], [659, 0.09], [784, 0.16]],
-  bad: [[311, 0.14], [233, 0.22]],
-  test: [[660, 0.1], [784, 0.1], [988, 0.14]],
-};
-
-export function signal(kind: keyof typeof TUNES) {
-  const vol = prefs.sfx;
-  if (!vol) return;
-  try {
-    ctx ??= new AudioContext();
-    let t = ctx.currentTime + 0.01;
-    for (const [freq, len] of TUNES[kind]) {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = "triangle";
-      osc.frequency.value = freq;
-      gain.gain.setValueAtTime(0.0001, t);
-      gain.gain.exponentialRampToValueAtTime(0.25 * vol, t + 0.015);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + len);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(t);
-      osc.stop(t + len + 0.02);
-      t += len * 0.9;
-    }
-  } catch { /* audio unavailable */ }
 }

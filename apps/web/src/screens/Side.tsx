@@ -3,7 +3,8 @@ import { memo, useEffect, useRef, useState } from "react";
 import type { ChatItem, RoomView } from "@kvz/protocol";
 import { abs, send, useStore, type Profile } from "../net.ts";
 import { keyFromEvent, keyLabel } from "../hotkeys.ts";
-import { HOST_KEY_DEFAULTS, setPrefs, signal, usePrefs, type HostKeys } from "../prefs.ts";
+import { getPrefs, HOST_KEY_DEFAULTS, setPrefs, usePrefs, type HostKeys } from "../prefs.ts";
+import { DEFAULT_SOUNDS, playSound, SOUND_EVENTS, VARIANTS } from "../sounds.ts";
 
 const HOST_KEY_ROWS: [keyof HostKeys, "keyRight" | "keyWrong" | "keyX2" | "keyZero" | "keyHalf" | "keyMinus2" | "keyMinusHalf" | "keyAdvance"][] = [
   ["right", "keyRight"], ["wrong", "keyWrong"], ["x2", "keyX2"], ["half", "keyHalf"], ["zero", "keyZero"], ["minusHalf", "keyMinusHalf"], ["minus2", "keyMinus2"], ["advance", "keyAdvance"],
@@ -272,7 +273,27 @@ export function SettingsPanel({ bare }: { bare?: boolean }) {
           <div className="setting"><span><span className="setting-label">{s.media}</span><span className="note">{s.mediaNote}</span></span>
             <Volume id="pref-volume" value={p.volume} onChange={(v) => setPrefs({ volume: v })} /></div>
           <div className="setting"><span><span className="setting-label">{s.sfx}</span><span className="note">{s.sfxNote}</span></span>
-            <Volume id="pref-sfx" value={p.sfx} onChange={(v) => setPrefs({ sfx: v })} onRelease={() => signal("test")} /></div>
+            <Volume id="pref-sfx" value={p.sfx} onChange={(v) => setPrefs({ sfx: v })} onRelease={() => playSound("good")} /></div>
+        </div>
+      </section>
+      <section>
+        <p className="eyebrow">{s.signals}</p>
+        <p className="note" style={{ margin: "0 0 8px" }}>{s.signalsNote}</p>
+        <div className="settings">
+          {SOUND_EVENTS.map((ev) => {
+            const cur = p.sounds?.[ev] ?? DEFAULT_SOUNDS[ev];
+            const pick = (i: number) => { setPrefs({ sounds: { ...getPrefs().sounds, [ev]: i } }); if (i >= 0) playSound(ev, i); };
+            return (
+              <div className="setting" key={ev}><span><span className="setting-label">{s.events[ev]}</span></span>
+                <div className="seg sound-pick" role="radiogroup" aria-label={s.events[ev]}>
+                  {VARIANTS[ev].map((_, i) => (
+                    <button key={i} type="button" role="radio" aria-checked={cur === i} className={cur === i ? "on" : ""} title={s.listen} onClick={() => pick(i)}>{i + 1}</button>
+                  ))}
+                  <button type="button" role="radio" aria-checked={cur === -1} className={cur === -1 ? "on" : ""} onClick={() => pick(-1)}>{s.off}</button>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </section>
       <section>
@@ -332,6 +353,22 @@ function KeyRow({ label, value, onChange }: { label: string; value: string; onCh
         <button type="button" className="btn sm" onClick={() => setListen(true)}>{t.prefs.change}</button>
       </span>
     </div>
+  );
+}
+
+/** Pack audio and video volume, small, for the top bar: always at hand during the game. */
+export function VolumeChip() {
+  const { volume } = usePrefs();
+  const t = useT();
+  const [last, setLast] = useState(volume || 0.8);
+  return (
+    <span className="chip vol-chip" title={t.prefs.mediaNote}>
+      <button type="button" className="vol-icon" aria-label={volume ? t.prefs.mute : t.prefs.unmute} onClick={() => { if (volume) { setLast(volume); setPrefs({ volume: 0 }); } else setPrefs({ volume: last }); }}>
+        {volume === 0 ? "🔇" : volume < 0.5 ? "🔉" : "🔊"}
+      </button>
+      <input type="range" min={0} max={100} step={5} value={Math.round(volume * 100)} aria-label={t.prefs.media} aria-valuetext={`${Math.round(volume * 100)}%`}
+        onChange={(e) => setPrefs({ volume: Number(e.target.value) / 100 })} />
+    </span>
   );
 }
 
