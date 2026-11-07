@@ -16,6 +16,8 @@ export interface Prefs {
   /** Hotkeys: answer (press the button) and pass. */
   answerKey: string;
   passKey: string;
+  /** Small player cards: more room for the game. */
+  compactCards?: boolean;
   /** Kinds of chat lines this person hid (see ChatKind in Side.tsx). */
   chatHide?: string[];
   /** Host keys: scoring an answer and the "jump forward". */

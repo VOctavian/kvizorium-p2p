@@ -1,5 +1,4 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { createPortal } from "react-dom";
 import { REACTIONS, type MediaView, type PersonView, type TimerView } from "@kvz/protocol";
 import { abs, getState, onReaction, send, useStore, type Reaction } from "./net.ts";
 import { mediaUrl, readyUrl, shareVersion, subscribeShare, whenReady } from "./share.ts";
@@ -211,23 +210,45 @@ function AutoMedia({ kind, src, mime, playback = "play" }: { kind: "audio" | "vi
 /**
  * Question content. `reading` turns on karaoke text and line-by-line pictures for the reading phase;
  * Sound and video have no controls for anyone: `playback` decides when they play.
+ *
+ * Text next to a picture or video is never cut. Up to three lines, it goes above the media (wide ones)
+ * or beside them (tall ones); longer, it is read on its own first, then the media take the whole box
+ * and a button brings the text back.
  */
 export function MediaList({ items, big = true, reading, playback, point }: { items: MediaView[]; big?: boolean; reading?: Reading; playback?: Playback; point?: PointLayer }) {
   const t = useT();
   // A point question is answered on its first picture.
   const pointAt = point ? items.findIndex((m) => m.type === "image") : -1;
-  // Next to a picture or video, text is a one-line caption so the media get the room.
-  const caption = big && items.some((m) => m.type === "image" || m.type === "video");
+  const visuals = items.filter(isVisual);
+  const words = items.filter((m) => m.type === "text").map((m) => m.text ?? "").join("\n");
+  const combo = big && visuals.length > 0 && !!words.trim();
+  const probe = useRef<HTMLParagraphElement>(null);
+  const fit = useCaptionFit(probe, combo ? words : "");
+  const long = combo && fit.long;
+  const first = visuals[0];
+  const firstKey = first ? `${first.url ?? ""}:${first.file ?? ""}` : "";
+  const [ar, setAr] = useState<{ key: string; ar: number }>();
+  const side = combo && !long && visuals.length === 1 && ar?.key === firstKey && ar.ar < 1.15;
+  // Long text: read first, the media after it.
+  const order = long ? [...items.filter(isWords), ...items.filter((m) => !isWords(m))] : items;
   let at = reading?.startedAt ?? 0;
-  const nodes = items.map((m, i) => {
-        const key = `${i}:${m.url ?? (m.file != null ? `f${m.file}` : m.text)}`;
-        const start = at;
-        if (reading) {
-          if (m.type === "text" || m.type === "say") at += ((m.text ?? "").length / reading.speed) * 1000;
-          else if (m.type === "image") at += Math.max(2.5, reading.imageReveal) * 1000;
-          else if (m.type === "audio" || m.type === "video") at += (m.duration ?? 8) * 1000;
-        }
-        return <Later key={key} at={reading && i > 0 ? start : 0} box={m.type === "image" || m.type === "video" ? "q-media visual" : undefined}>{node(m, key, start)}</Later>;
+  const starts = order.map((m) => {
+    const s = at;
+    if (reading) {
+      if (m.type === "text" || m.type === "say") at += ((m.text ?? "").length / reading.speed) * 1000;
+      else if (m.type === "image") at += Math.max(2.5, reading.imageReveal) * 1000;
+      else if (m.type === "audio" || m.type === "video") at += (m.duration ?? 8) * 1000;
+    }
+    return s;
+  });
+  const wordsEnd = long && reading ? starts[order.findIndex((m) => !isWords(m))] ?? 0 : 0;
+  const textDone = useAfter(wordsEnd);
+  const [showText, setShowText] = useState(false);
+  useEffect(() => setShowText(false), [words, firstKey]);
+
+  const nodes = order.map((m, i) => {
+    const key = `${i}:${m.url ?? (m.file != null ? `f${m.file}` : m.text)}`;
+    return <Later key={key} at={reading && i > 0 ? starts[i] : 0} box={isVisual(m) ? "q-media visual" : undefined}>{node(m, key, starts[i])}</Later>;
   });
   function node(m: MediaView, key: string, start: number) {
         switch (m.type) {
@@ -235,8 +256,9 @@ export function MediaList({ items, big = true, reading, playback, point }: { ite
             const t = m.text ?? "";
             const len = t.length;
             const size = len > 260 ? "len-xl" : len > 160 ? "len-l" : len > 90 ? "len-m" : "";
-            if (caption) return <OneLine key={key} text={t} className="q-text q-caption">{reading?.karaoke ? <Karaoke text={t} start={start} speed={reading.speed} /> : t}</OneLine>;
-            return <p key={key} className={big ? `q-text ${size}` : ""}>{reading?.karaoke ? <Karaoke text={t} start={start} speed={reading.speed} /> : t}</p>;
+            const body = reading?.karaoke ? <Karaoke text={t} start={start} speed={reading.speed} /> : t;
+            if (combo && !long) return <p key={key} className="q-text q-caption" style={fit.px ? { fontSize: `${fit.px}px` } : undefined}>{body}</p>;
+            return <p key={key} className={big ? `q-text ${size}` : ""}>{body}</p>;
           }
           case "say": return <p key={key} className="q-say">{t.media.host} {reading?.karaoke ? <Karaoke text={m.text ?? ""} start={start} speed={reading.speed} /> : m.text}</p>;
           case "image": if (items[pointAt] === m && point) return <div key={key} className="q-media visual"><WithSrc m={m}>{(src) => <PointImage src={src} layer={point} />}</WithSrc></div>;
@@ -247,17 +269,124 @@ export function MediaList({ items, big = true, reading, playback, point }: { ite
         }
   }
   // Two or more pictures/videos in a row share one line instead of stacking.
-  const out: React.ReactNode[] = [];
-  for (let i = 0; i < items.length; i++) {
-    const visual = (k: number) => items[k] && (items[k].type === "image" || items[k].type === "video");
-    if (visual(i) && visual(i + 1)) {
-      const group: React.ReactNode[] = [];
-      while (visual(i)) group.push(nodes[i++]);
-      i--;
-      out.push(<div key={`row${i}`} className="media-row" style={{ "--n": group.length } as React.CSSProperties}>{group}</div>);
-    } else out.push(nodes[i]);
+  const flow = (pick: (m: MediaView) => boolean) => {
+    const out: React.ReactNode[] = [];
+    for (let i = 0; i < order.length; i++) {
+      if (!pick(order[i])) continue;
+      const visual = (k: number) => !!order[k] && isVisual(order[k]) && pick(order[k]);
+      if (visual(i) && visual(i + 1)) {
+        const group: React.ReactNode[] = [];
+        while (visual(i)) group.push(nodes[i++]);
+        i--;
+        out.push(<div key={`row${i}`} className="media-row" style={{ "--n": group.length } as React.CSSProperties}>{group}</div>);
+      } else out.push(nodes[i]);
+    }
+    return out;
+  };
+  const sizer = combo && visuals.length === 1 && first ? <AspectProbe key={firstKey} m={first} onAr={(r) => setAr({ key: firstKey, ar: r })} /> : null;
+  const probeEl = combo ? <p ref={probe} className="q-text q-caption q-probe" aria-hidden="true">{words}</p> : null;
+  if (!combo) return <>{flow(() => true)}</>;
+  if (long) {
+    const media = textDone && !showText;
+    const back = visuals.every((m) => m.type === "video") ? t.media.showVideo : t.media.showImage;
+    return (
+      <>
+        {probeEl}
+        {flow((m) => (media ? !isWords(m) : !isVisual(m)))}
+        {textDone && <button type="button" className="btn sm q-swap" aria-pressed={showText} onClick={() => setShowText(!showText)}>{showText ? back : t.media.showText}</button>}
+      </>
+    );
   }
-  return <>{out}</>;
+  if (side) {
+    return (
+      <>
+        {probeEl}{sizer}
+        <div className="q-combo">
+          <div className="q-combo-text">{flow(isWords)}</div>
+          <div className="q-combo-media">{flow((m) => !isWords(m))}</div>
+        </div>
+      </>
+    );
+  }
+  return <>{probeEl}{sizer}{flow(isWords)}{flow((m) => !isWords(m))}</>;
+}
+
+const isVisual = (m: MediaView) => m.type === "image" || m.type === "video";
+const isWords = (m: MediaView) => m.type === "text" || m.type === "say";
+
+/** True from server time `at` on (0 = already). */
+function useAfter(at: number) {
+  const due = () => !at || Date.now() + getState().offset >= at;
+  const [done, setDone] = useState(due);
+  useEffect(() => {
+    if (due()) { setDone(true); return; }
+    setDone(false);
+    const id = setTimeout(() => setDone(true), at - (Date.now() + getState().offset));
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [at]);
+  return done;
+}
+
+/**
+ * How a question's text fits next to its media, measured on a hidden copy as wide as the box:
+ * the largest font (down to 70 % of the caption size) that keeps it within three lines, or `long`.
+ */
+function useCaptionFit(probe: React.RefObject<HTMLParagraphElement | null>, text: string) {
+  const [fit, setFit] = useState<{ long: boolean; px?: number }>({ long: false });
+  useLayoutEffect(() => {
+    const el = probe.current;
+    if (!el || !text) { setFit((f) => (f.long || f.px ? { long: false } : f)); return; }
+    const measure = () => {
+      el.style.fontSize = "";
+      const base = parseFloat(getComputedStyle(el).fontSize) || 24;
+      const lines = (px: number) => {
+        el.style.fontSize = `${px}px`;
+        const lh = parseFloat(getComputedStyle(el).lineHeight) || px * 1.3;
+        return Math.round(el.scrollHeight / lh);
+      };
+      let next: { long: boolean; px?: number };
+      if (lines(base) <= 3) next = { long: false, px: Math.floor(base) };
+      else {
+        let lo = Math.max(15, base * 0.7), hi = base;
+        if (lines(lo) > 3) next = { long: true };
+        else {
+          for (let i = 0; i < 8 && hi - lo > 0.5; i++) { const mid = (lo + hi) / 2; if (lines(mid) <= 3) lo = mid; else hi = mid; }
+          next = { long: false, px: Math.floor(lo) };
+        }
+      }
+      setFit((f) => (f.long === next.long && f.px === next.px ? f : next));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (el.parentElement) ro.observe(el.parentElement);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text]);
+  return fit;
+}
+
+/** Learns a picture's or video's width/height before it is shown, to choose where its text goes. */
+function AspectProbe({ m, onAr }: { m: MediaView; onAr: (ar: number) => void }) {
+  const src = useSrc(m);
+  useEffect(() => {
+    if (!src) return;
+    let live = true;
+    if (m.type === "image") {
+      const img = new Image();
+      img.onload = () => { if (live && img.naturalWidth && img.naturalHeight) onAr(img.naturalWidth / img.naturalHeight); };
+      img.src = src;
+    } else {
+      const v = document.createElement("video");
+      v.preload = "metadata";
+      v.muted = true;
+      v.onloadedmetadata = () => { if (live && v.videoWidth && v.videoHeight) onAr(v.videoWidth / v.videoHeight); v.removeAttribute("src"); v.load(); };
+      v.src = src;
+    }
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src]);
+  return null;
 }
 
 /** What a point question draws over its picture, and where a click goes. */
@@ -392,7 +521,7 @@ export function useGrowText(ref: React.RefObject<HTMLElement | null>, deps: unkn
       if (busy) return;
       busy = true;
       try {
-        const texts = [...box.querySelectorAll<HTMLElement>(".q-text:not(.one-line)")];
+        const texts = [...box.querySelectorAll<HTMLElement>(".q-text:not(.q-probe):not(.q-caption)")];
         for (const el of texts) el.style.fontSize = "";
         if (!texts.length || !big.matches || box.querySelector(".q-media.visual, .media-row")) return;
         const base = parseFloat(getComputedStyle(texts[0]).fontSize) || 20;
@@ -420,53 +549,6 @@ export function useGrowText(ref: React.RefObject<HTMLElement | null>, deps: unkn
     return () => { ro.disconnect(); mo.disconnect(); big.removeEventListener("change", fit); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
-}
-
-/**
- * Always one line: the font shrinks (down to 60 % of the CSS size) until the text fits;
- * if it still doesn't, it ends with "…" and the full text shows in a tooltip on hover.
- */
-export function OneLine({ text, className, children }: { text: string; className?: string; children?: ReactNode }) {
-  const ref = useRef<HTMLParagraphElement>(null);
-  const [cut, setCut] = useState(false);
-  const [tip, setTip] = useState<{ x: number; y: number; w: number } | null>(null);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const fit = () => {
-      el.style.fontSize = "";
-      const max = parseFloat(getComputedStyle(el).fontSize) || 20;
-      const fits = () => el.scrollWidth <= el.clientWidth + 1;
-      if (fits()) return setCut(false);
-      let lo = Math.max(12, max * 0.6), hi = max;
-      el.style.fontSize = `${lo}px`;
-      if (!fits()) return setCut(true);
-      for (let i = 0; i < 10 && hi - lo > 0.25; i++) {
-        const mid = (lo + hi) / 2;
-        el.style.fontSize = `${mid}px`;
-        if (fits()) lo = mid; else hi = mid;
-      }
-      el.style.fontSize = `${lo}px`;
-      setCut(false);
-    };
-    fit();
-    const ro = new ResizeObserver(fit);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [text]);
-  const show = () => {
-    const r = ref.current?.getBoundingClientRect();
-    if (cut && r) setTip({ x: r.left, y: r.bottom + 6, w: r.width });
-  };
-  return (
-    <>
-      <p ref={ref} className={`${className ?? ""} one-line ${cut ? "cut" : ""}`} tabIndex={cut ? 0 : undefined}
-        onMouseEnter={show} onMouseLeave={() => setTip(null)} onFocus={show} onBlur={() => setTip(null)}>
-        {children ?? text}
-      </p>
-      {tip && createPortal(<div className="line-tip" role="tooltip" style={{ left: tip.x, top: tip.y, maxWidth: tip.w }}>{text}</div>, document.body)}
-    </>
-  );
 }
 
 /**

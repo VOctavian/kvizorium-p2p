@@ -8,6 +8,7 @@ import { SettingsPanel } from "./screens/Side.tsx";
 import { Modal } from "./ui.tsx";
 import { useT } from "./i18n.ts";
 import { warmSounds } from "./sounds.ts";
+import { pendingInvite, showRoomInUrl } from "./invite.ts";
 
 export function App() {
   const inRoom = useStore((s) => !!s.room);
@@ -16,6 +17,9 @@ export function App() {
   const t = useT();
   useEffect(() => { document.title = t.appName; }, [t]);
   useEffect(() => { const id = setTimeout(warmSounds, 3000); return () => clearTimeout(id); }, []);
+  // The address bar shows the room's link while in it.
+  const roomId = useStore((s) => s.room?.id);
+  useEffect(() => { if (location.hash !== "#showcase" && (roomId || !pendingInvite())) showRoomInUrl(roomId); }, [roomId]);
 
   if (location.hash === "#showcase") return <Showcase />;
   if (!profile) return <Welcome onDone={(p) => { setProfile(p); connect(); }} />;

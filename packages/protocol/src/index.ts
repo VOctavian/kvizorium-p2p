@@ -211,6 +211,8 @@ export interface QuestionView {
     who: string[];
     done: string[];
     myAnswer?: string;
+    /** "Stakes for everyone": this player's own stake (the others' stay secret until the reveal). */
+    myStake?: number;
     /** Host sees them while judging; everyone sees them at the reveal. */
     answers?: { id: string; answer: string; correct?: boolean; delta?: number; stake?: number; mult?: number }[];
   };

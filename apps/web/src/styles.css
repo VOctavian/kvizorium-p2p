@@ -128,7 +128,7 @@ details summary { cursor: pointer; color: var(--text-dim); font-size: 13px; }
 .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
 .toolbar .input { flex: 1 1 220px; width: auto; }
 .room-list { display: grid; gap: 8px; }
-.room { display: grid; grid-template-columns: 46px minmax(0, 1fr) auto auto 22px; align-items: center; gap: 14px; padding: 10px 14px; border-radius: var(--r-md); background: rgba(255,255,255,.04); border: 1px solid var(--line); cursor: pointer; text-align: left; width: 100%; transition: background .2s, border-color .2s; }
+.room { display: grid; grid-template-columns: 46px minmax(0, 1fr) auto auto 22px auto; align-items: center; gap: 14px; padding: 10px 14px; border-radius: var(--r-md); background: rgba(255,255,255,.04); border: 1px solid var(--line); cursor: pointer; text-align: left; width: 100%; transition: background .2s, border-color .2s; }
 .room:hover { background: rgba(255,255,255,.08); }
 .room[aria-selected="true"] { border-color: rgba(67,240,196,.6); background: rgba(67,240,196,.07); }
 .cover { width: 46px; height: 46px; border-radius: 12px; display: grid; place-items: center; font: 800 14px var(--font-display); color: rgba(255,255,255,.95); box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); overflow: hidden; }
@@ -418,7 +418,7 @@ button.score { cursor: pointer; }
   .podiums { justify-content: start; }
 }
 @media (max-width: 600px) {
-  .room { grid-template-columns: 46px minmax(0, 1fr) auto; }
+  .room { grid-template-columns: 46px minmax(0, 1fr) auto auto; }
   .room .pill, .room .lock { display: none; }
 }
 @media (max-width: 480px) {
@@ -703,11 +703,8 @@ button.theme { cursor: pointer; justify-content: space-between; }
 .buzzer, .buzz-row .pass-btn { padding-block: 7px; }
 .buzzer kbd, .pass-btn kbd { padding: 1px 6px; font-size: 11px; }
 
-/* Question with media: a one-line caption, media as large as the box allows */
+/* Question with media: the media as large as the box allows */
 .q-body { gap: 8px; }
-.q-text.one-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-wrap: nowrap; line-height: 1.2; flex-shrink: 0; }
-.q-text.one-line.cut { cursor: help; }
-.line-tip { position: fixed; z-index: 100; padding: 8px 12px; border-radius: 10px; background: rgba(16, 20, 52, .97); border: 1px solid var(--line-2); box-shadow: 0 14px 40px -12px rgba(0,0,0,.8); font: 600 15px/1.35 var(--font-body); color: var(--text); pointer-events: none; white-space: normal; overflow-wrap: anywhere; }
 .q-media.visual { background: none; border: 0; border-radius: 0; container-type: size; height: clamp(160px, 34vh, 560px); }
 .q-media.visual img, .q-media.visual video { --ar: 16 / 9; aspect-ratio: var(--ar); width: min(100cqw, 100cqh * var(--ar)); height: auto; max-width: none; max-height: none; object-fit: contain; border-radius: var(--r-md); border: 1px solid var(--line); background: #0c1030; }
 .media-row { grid-template-rows: minmax(0, 1fr); }
@@ -959,3 +956,46 @@ body { padding: 0; background: radial-gradient(120% 90% at 85% -10%, rgba(138,12
 .name-taken { display: block; margin-top: 6px; font-size: 13px; color: #ffb3bf; }
 .link-btn { background: none; border: 0; padding: 0; color: var(--mint); font: inherit; text-decoration: underline; cursor: pointer; }
 .input[aria-invalid="true"] { border-color: rgba(255,90,110,.6); }
+
+/* Question text next to a picture or video: never cut. Short — above wide media or beside tall ones;
+   long — read on its own, then the media, with a button to swap back. */
+.q-body { position: relative; }
+.q-text.q-caption { flex-shrink: 0; line-height: 1.3; }
+.q-body .q-text.q-caption.q-probe { position: absolute; left: 0; right: 0; top: 0; visibility: hidden; pointer-events: none; font-size: clamp(18px, 1.1vw + .8vh, 34px); }
+.q-combo { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 20px; align-items: center; height: clamp(220px, 42vh, 620px); min-height: 0; }
+.q-combo-text { display: flex; flex-direction: column; gap: 10px; min-height: 0; max-height: 100%; overflow: auto; }
+.q-combo-media { height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.q-combo-media > .q-media.visual { flex: 1 1 0; height: auto; min-height: 0; }
+.q-swap { align-self: center; flex: none; }
+@media (min-width: 900px) and (min-height: 560px) {
+  .q-body > .q-combo { flex: 1 1 0; height: auto; min-height: 120px; }
+}
+@media (max-width: 700px) {
+  .q-combo { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .q-combo-media { height: clamp(160px, 34vh, 420px); }
+}
+.room:focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; }
+
+/* Stakes over the player cards */
+.podium .stake-tag { position: absolute; top: -11px; right: -6px; z-index: 3; padding: 3px 9px; border-radius: 999px; font: 800 12px/1.2 var(--font-num); font-variant-numeric: tabular-nums; white-space: nowrap; color: #2b1a02; background: var(--amber); box-shadow: 0 6px 18px -6px var(--amber); }
+.podium .stake-tag.hidden { color: var(--text); background: rgba(138,123,255,.85); box-shadow: 0 6px 18px -6px var(--violet); cursor: help; }
+.podium .stake-tag.pass { color: var(--text-dim); background: rgba(40,46,90,.95); border: 1px solid var(--line-2); box-shadow: none; }
+
+/* Small player cards: a toggle in the corner of the row */
+.podiums { position: relative; }
+.cards-size { position: absolute; top: 4px; right: 6px; z-index: 4; width: 26px; height: 22px; display: grid; place-items: center; padding: 0; border-radius: 8px; border: 1px solid var(--line); background: rgba(10,14,40,.55); color: var(--text-dim); font: 700 15px/1 var(--font-body); cursor: pointer; opacity: .65; transition: opacity .2s, color .2s; }
+.cards-size:hover, .cards-size:focus-visible { opacity: 1; color: var(--text); }
+.stage.compact .podiums { padding-top: 18px; padding-bottom: 4px; padding-right: 40px; }
+.stage.compact .podiums > .podium { flex: 0 1 190px; display: grid; grid-template-columns: 40px minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 8px; row-gap: 1px; align-items: center; padding: 6px 10px 9px 6px; text-align: left; border-radius: 14px; }
+.stage.compact .podium .pic { grid-row: 1 / 3; width: 40px; border-radius: 10px; }
+.stage.compact .podium .name { font-size: 13px; }
+.stage.compact .podium .score { font-size: 17px; }
+.stage.compact .podium .state { display: none; }
+.stage.compact .podium .pbar { left: 6px; right: 6px; bottom: 3px; height: 4px; }
+.stage.compact .podium .flag { top: -10px; font-size: 10px; padding: 3px 8px; }
+.stage.compact .podium .more-btn.on-card { top: 50%; transform: translateY(-50%); width: 22px; height: 22px; }
+.stage.compact .podium.answering { transform: translateY(-4px) scale(1.04); }
+.stage.compact .podiums > .podium.seat-free { flex: 0 1 120px; display: flex; flex-direction: row; align-items: center; gap: 6px; padding: 6px 8px; }
+.stage.compact .podium.seat-free .pic { grid-row: auto; width: auto; min-height: 0; background: none; padding: 0; }
+.stage.compact .podiums > .podium.seat-add { flex: 0 0 auto; min-height: 0; padding: 6px 12px; display: flex; gap: 6px; align-items: center; }
+.stage.compact .podium.seat-add span { font-size: 18px; }

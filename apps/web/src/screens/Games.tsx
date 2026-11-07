@@ -1,8 +1,9 @@
 import { useT, type T } from "../i18n.ts";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { roomNameKey, type RoomSummary, type Settings } from "@kvz/protocol";
 import { deletePreset, loadLastChoice, loadPresets, saveLastChoice, savePreset, type Preset } from "../createPrefs.ts";
-import { abs, send, setPendingPack, useStore } from "../net.ts";
+import { abs, PEER_MODE, send, setPendingPack, useStore } from "../net.ts";
+import { clearInvite, pendingInvite } from "../invite.ts";
 import { SettingsForm, settingsSummary, Stepper } from "../settings.tsx";
 import { LibraryButton } from "./Library.tsx";
 import { avatarSrc, coverGradient, HiddenCover, HiddenName, initials, Lock, Modal, Seg, toggleFullscreen, useNow } from "../ui.tsx";
@@ -18,7 +19,7 @@ export function Games({ onEditProfile, onSettings }: { onEditProfile: () => void
   const [sel, setSel] = useState<string | undefined>();
   const [creating, setCreating] = useState(false);
   const now = useNow(30_000);
-  const [joining, setJoining] = useState<{ room?: RoomSummary; code?: boolean } | null>(null);
+  const [joining, setJoining] = useState<{ room?: RoomSummary; code?: boolean; prefill?: string } | null>(null);
   const patchF = (p: Partial<Filters>) => setF((x) => { const n = { ...x, ...p }; saveFilters(n); return n; });
 
   const list = useMemo(() => {
@@ -32,6 +33,30 @@ export function Games({ onEditProfile, onSettings }: { onEditProfile: () => void
     if (r.hasPassword) setJoining({ room: r });
     else send({ t: "joinRoom", roomId: r.id, asViewer });
   };
+
+  // Opened by a room link: join it once it's on the list (asking the password if it has one);
+  // if it doesn't show up, try the code anyway and ask the password if the room wants one.
+  const [blind, setBlind] = useState<{ code: string; at: number }>();
+  const lastError = useStore((s) => s.lastError);
+  useEffect(() => {
+    const code = pendingInvite();
+    if (!code || conn !== "open") return;
+    const r = rooms.find((x) => x.id === code);
+    if (r) { clearInvite(); join(r); return; }
+    const id = setTimeout(() => {
+      if (pendingInvite() !== code) return;
+      clearInvite();
+      setBlind({ code, at: Date.now() });
+      send({ t: "joinRoom", roomId: code });
+    }, PEER_MODE ? 9000 : 2500);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rooms, conn]);
+  useEffect(() => {
+    if (!blind || !lastError || lastError.at < blind.at) return;
+    if (lastError.key === "err.password") setJoining({ code: true, prefill: blind.code });
+    setBlind(undefined);
+  }, [lastError, blind]);
 
   return (
     <div className="stage single">
@@ -76,13 +101,15 @@ export function Games({ onEditProfile, onSettings }: { onEditProfile: () => void
               )}
               <div className="room-list" role="listbox" aria-label={t.games.list}>
                 {list.length ? list.map((r) => (
-                  <button key={r.id} className="room" role="option" aria-selected={selected?.id === r.id} onClick={() => setSel(r.id)} onDoubleClick={() => join(r)}>
+                  <div key={r.id} className="room" role="option" tabIndex={0} aria-selected={selected?.id === r.id} onClick={() => setSel(r.id)} onDoubleClick={() => join(r)}
+                    onKeyDown={(e) => { if (e.target !== e.currentTarget) return; if (e.key === "Enter") join(r); else if (e.key === " ") { e.preventDefault(); setSel(r.id); } }}>
                     {r.packHidden ? <HiddenCover className="cover" /> : <span className="cover" style={{ background: coverGradient(r.packName ?? r.name) }}>{initials(r.packName ?? r.name)}</span>}
                     <span className="info"><b>{r.name}</b><span>{r.packHidden ? <HiddenName className="inline" /> : r.packName ?? t.games.noPack} · {r.hostFree ? t.games.hostFree : t.games.hosts(r.hostName)} · {roomTime(r, now, t)}</span></span>
                     <span className="seats">{r.players}<small>/{r.maxPlayers}</small></span>
                     {r.status === "play" ? <span className="pill play">{r.round ? t.tx(r.round) : t.games.going}</span> : r.players >= r.maxPlayers ? <span className="pill full">{t.games.full}</span> : <span className="pill wait">{t.games.wait}</span>}
-                    <span>{r.hasPassword && <Lock />}</span>
-                  </button>
+                    <span className="lock">{r.hasPassword && <Lock />}</span>
+                    <button type="button" className="btn sm primary room-join" onClick={(e) => { e.stopPropagation(); join(r); }}>{t.enter}</button>
+                  </div>
                 )) : (
                   <div className="empty-list">
                     <b>{rooms.length ? t.games.nothingFound : t.games.nobody}</b>
@@ -138,7 +165,7 @@ export function Games({ onEditProfile, onSettings }: { onEditProfile: () => void
 
       {creating && <CreateRoom onClose={() => setCreating(false)} />}
       {joining && (
-        <JoinModal room={joining.room} askCode={!!joining.code} onClose={() => setJoining(null)} />
+        <JoinModal room={joining.room} askCode={!!joining.code} prefill={joining.prefill} onClose={() => setJoining(null)} />
       )}
     </div>
   );
@@ -284,8 +311,8 @@ function normalizeCode(s: string): string {
   return [...s.toUpperCase().replace(/[\s-]+/g, "")].map((c) => LOOKALIKE[c] ?? c).join("").slice(0, 4);
 }
 
-function JoinModal({ room, askCode, onClose }: { room?: RoomSummary; askCode: boolean; onClose: () => void }) {
-  const [code, setCode] = useState(room?.id ?? "");
+function JoinModal({ room, askCode, prefill, onClose }: { room?: RoomSummary; askCode: boolean; prefill?: string; onClose: () => void }) {
+  const [code, setCode] = useState(room?.id ?? prefill ?? "");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
   const t = useT();
@@ -297,8 +324,8 @@ function JoinModal({ room, askCode, onClose }: { room?: RoomSummary; askCode: bo
         send({ t: "joinRoom", roomId: normalizeCode(code), password: password || undefined });
         onClose();
       }}>
-        {askCode && <label className="field"><span>{t.join.code}</span><input className="input code" id="join-code" value={code} maxLength={8} placeholder="QZ4F" autoFocus onChange={(e) => { setCode(normalizeCode(e.target.value)); setErr(""); }} /></label>}
-        {(!room || room.hasPassword) && <label className="field"><span>{t.join.password}{room ? "" : t.join.ifAny}</span><input className="input" id="join-password" type="password" value={password} autoFocus={!askCode} onChange={(e) => setPassword(e.target.value)} /></label>}
+        {askCode && <label className="field"><span>{t.join.code}</span><input className="input code" id="join-code" value={code} maxLength={8} placeholder="QZ4F" autoFocus={!prefill} onChange={(e) => { setCode(normalizeCode(e.target.value)); setErr(""); }} /></label>}
+        {(!room || room.hasPassword) && <label className="field"><span>{t.join.password}{room || prefill ? "" : t.join.ifAny}</span><input className="input" id="join-password" type="password" value={password} autoFocus={!askCode || !!prefill} onChange={(e) => setPassword(e.target.value)} /></label>}
         {err && <p className="err">{err}</p>}
         <div className="foot"><button type="button" className="btn ghost" onClick={onClose}>{t.cancel}</button><button className="btn primary" type="submit">{t.enter}</button></div>
       </form>

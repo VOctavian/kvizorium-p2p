@@ -2082,8 +2082,9 @@ export class Room {
               who: this.allAnswering().map((p) => p.id),
               done: [...q.all].filter(([, a]) => a.done).map(([id]) => id),
               myAnswer: q.all.get(me)?.text,
+              myStake: q.stakes?.get(me),
               answers: reveal || (isHost && q.stage === "judging")
-                ? this.allAnswering().map((p) => ({ id: p.id, answer: q.all!.get(p.id)?.text ?? "", correct: q.allJudged!.get(p.id), delta: q.allDelta!.get(p.id), stake: reveal ? q.stakes?.get(p.id) : undefined, mult: q.allMult?.get(p.id) }))
+                ? this.allAnswering().map((p) => ({ id: p.id, answer: q.all!.get(p.id)?.text ?? "", correct: q.allJudged!.get(p.id), delta: q.allDelta!.get(p.id), stake: reveal || isHost ? q.stakes?.get(p.id) : undefined, mult: q.allMult?.get(p.id) }))
                 : undefined,
             }
           : undefined,

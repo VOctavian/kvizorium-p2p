@@ -26,6 +26,8 @@ export interface State {
   toast?: { text: string; at: number; tone?: "bad" | "info" };
   /** Peer mode: the room is heard only through the relays ("far"), or not at all for now ("lost"). */
   link?: "far" | "lost";
+  /** The last error the server sent (to react to some, e.g. a password is needed). */
+  lastError?: { key?: string; at: number };
   /** Pack upload in progress from this client. */
   upload?: { name: string; progress: number; convert?: { done: number; total: number } };
 }
@@ -289,6 +291,7 @@ function onMessage(raw: ServerMsg) {
     }
     case "error":
       pendingPack = null;
+      set({ lastError: { key: m.text?.key, at: Date.now() } });
       return toast(m.text ? tr().tx(m.text) : m.message);
   }
 }

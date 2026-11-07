@@ -1,8 +1,9 @@
 import { useT, type T } from "../i18n.ts";
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { Multiplier, PlayerView, QuestionView, RoomView, TimerView } from "@kvz/protocol";
 import { send, toast, useStore, type Profile } from "../net.ts";
-import { usePrefs } from "../prefs.ts";
+import { roomLink } from "../invite.ts";
+import { setPrefs, usePrefs } from "../prefs.ts";
 import { playSound } from "../sounds.ts";
 import { VolumeChip } from "./Side.tsx";
 import { useHotkey } from "../hotkeys.ts";
@@ -18,12 +19,15 @@ export function RoomScreen({ onProfile }: { onProfile: (p: Profile) => void }) {
   const room = useStore((s) => s.room);
   useGameSignals(room);
   useHostKeys(room);
+  const { compactCards: compact } = usePrefs();
+  const t = useT();
+  const badges = useMemo(() => room && stakeBadges(room, t), [room?.phase, room?.stake, room?.stakeAll, room?.final, room?.question, room?.me.id, t]);
   if (!room) return null;
   const manage = hostRights(room);
   const inGame = room.phase !== "lobby" && room.phase !== "gameOver";
   const dense = (room.board?.themes.length ?? 0) > 8 && (room.phase === "choosing" || room.phase === "roundIntro");
   return (
-    <div className={`stage ${dense ? "dense" : ""}`}>
+    <div className={`stage ${dense ? "dense" : ""} ${compact ? "compact" : ""}`}>
       <div className="main">
         <Hud room={room} manage={manage} />
         <LinkBanner />
@@ -36,7 +40,7 @@ export function RoomScreen({ onProfile }: { onProfile: (p: Profile) => void }) {
           <PlayerRow players={room.players} seats={room.settings.maxPlayers} question={room.question} timer={room.timer} phase={room.phase} chooserId={room.chooserId}
             stakeTurn={room.stake?.turnId} secret={room.secret} finalTurn={room.final?.turnId} finalists={room.final?.participants}
             meId={room.me.id} leader={isLeader(room)} canSit={room.me.role === "viewer"}
-            menuFor={(id) => hasMenu(room, id)} />
+            menuFor={(id) => hasMenu(room, id)} badges={badges} compact={!!compact} />
         )}
       </div>
       <aside className="side">
@@ -129,7 +133,8 @@ function Hud({ room, manage }: { room: RoomView; manage: boolean }) {
         </span>
       ) : <span className="chip">{roundLabel}</span>)}
       <button className="chip" title={t.room.copyCode} onClick={() => {
-        navigator.clipboard?.writeText(room.id).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }, () => toast(t.room.codeIs(room.id), "info"));
+        const link = roomLink(room.id);
+        navigator.clipboard?.writeText(link).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }, () => toast(t.room.codeIs(link), "info"));
       }}>{copied ? t.room.copied : <>{t.room.room} <span className="code">{room.id}</span></>}</button>
       {manage && inGame && (
         <button className={`chip ${room.paused ? "warn" : ""}`} onClick={() => send({ t: "host", action: room.paused ? "resume" : "pause" })}>{room.paused ? t.resume : t.pause}</button>
@@ -176,9 +181,40 @@ interface RowProps {
   leader: boolean;
   canSit: boolean;
   menuFor: (id: string) => boolean;
+  badges?: Record<string, Badge>;
+  compact: boolean;
 }
 
-const PlayerRow = memo(function PlayerRow({ players, seats, question: q, timer, phase, chooserId, stakeTurn, secret, finalTurn, finalists, meId, leader, canSit, menuFor }: RowProps) {
+/** A note over a player's card: the stake they made (or that they made one, while it's secret). */
+interface Badge { text: string; tone?: "pass" | "hidden"; title?: string }
+
+/** Stakes over the cards: the auction (bids and passes), stakes for everyone and the final. */
+function stakeBadges(room: RoomView, t: T): Record<string, Badge> | undefined {
+  const out: Record<string, Badge> = {};
+  const num = (v: number) => v.toLocaleString(t.locale);
+  const hidden: Badge = { text: t.room.stakeHidden, tone: "hidden", title: t.room.stakeHiddenTitle };
+  const q = room.question;
+  const me = room.me.id;
+  if (room.phase === "stake" && room.stake) {
+    const s = room.stake;
+    for (const id of s.passed) out[id] = { text: t.room.stakePass, tone: "pass" };
+    if (s.leaderId) out[s.leaderId] = { text: s.allIn ? t.room.stakeAllIn(num(s.value)) : t.room.stakeTag(num(s.value)) };
+  } else if (room.phase === "stakeAll" && room.stakeAll) {
+    for (const id of room.stakeAll.done) out[id] = id === me && room.stakeAll.myStake != null ? { text: t.room.stakeTag(num(room.stakeAll.myStake)) } : hidden;
+  } else if (room.phase === "question" && q?.kind === "stake" && q.soloId) {
+    out[q.soloId] = { text: t.room.stakeTag(num(q.price)) };
+  } else if (room.phase === "question" && q?.kind === "stakeAll" && q.forAll) {
+    for (const id of q.forAll.who) out[id] = id === me && q.forAll.myStake != null ? { text: t.room.stakeTag(num(q.forAll.myStake)) } : hidden;
+    for (const a of q.forAll.answers ?? []) if (a.stake != null) out[a.id] = { text: t.room.stakeTag(num(a.stake)) };
+  } else if (room.final && (room.phase === "finalStakes" || room.phase === "finalAnswer" || room.phase === "finalJudge" || room.phase === "finalReveal")) {
+    const f = room.final;
+    for (const id of f.stakesDone) out[id] = id === me && f.myStake != null ? { text: t.room.stakeTag(num(f.myStake)) } : hidden;
+    for (const a of f.answers ?? []) if (a.stake != null) out[a.id] = { text: t.room.stakeTag(num(a.stake)) };
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+const PlayerRow = memo(function PlayerRow({ players, seats, question: q, timer, phase, chooserId, stakeTurn, secret, finalTurn, finalists, meId, leader, canSit, menuFor, badges, compact }: RowProps) {
   const answering = q?.stage === "answering" ? q.answeringId : undefined;
   const busyId = phase === "choosing" ? chooserId : stakeTurn ?? (secret && !secret.recipientId ? secret.giverId : secret?.recipientId) ?? finalTurn;
   const [flash, setFlash] = useState<{ id: string; good: boolean } | null>(null);
@@ -203,7 +239,7 @@ const PlayerRow = memo(function PlayerRow({ players, seats, question: q, timer, 
       {players.map((p) => {
         const cls = [answering === p.id ? "answering" : "", !answering && busyId === p.id ? "choosing" : "", resultClass(q, p.id), flash?.id === p.id ? (flash.good ? "flash-good" : "flash-bad") : ""].join(" ").trim();
         const state = answering === p.id ? t.room.answering : q?.passedIds.includes(p.id) && q.stage !== "reveal" ? t.q.pass : busyId === p.id ? label : p.online ? (finalists && !finalists.includes(p.id) ? t.room.notInFinal : t.room.inGame) : t.offline;
-        return <PlayerCard key={p.id} p={p} cls={cls} state={state} isMe={p.id === meId} menu={menuFor(p.id)} timer={answering === p.id ? answerTimer : undefined} />;
+        return <PlayerCard key={p.id} p={p} cls={cls} state={state} isMe={p.id === meId} menu={menuFor(p.id)} timer={answering === p.id ? answerTimer : undefined} badge={badges?.[p.id]} />;
       })}
       {Array.from({ length: free }, (_, i) => (
         <div key={`free${i}`} className="podium seat-free">
@@ -215,6 +251,8 @@ const PlayerRow = memo(function PlayerRow({ players, seats, question: q, timer, 
       {leader && seats < 12 && (
         <button className="podium seat-add" onClick={() => send({ t: "seat", action: "add" })} aria-label={t.room.addSeat}><span>+</span>{t.room.seat}</button>
       )}
+      <button type="button" className="cards-size" aria-pressed={compact} title={compact ? t.room.cardsBigger : t.room.cardsSmaller} aria-label={compact ? t.room.cardsBigger : t.room.cardsSmaller}
+        onClick={() => setPrefs({ compactCards: !compact })}>{compact ? "⌃" : "⌄"}</button>
     </footer>
   );
 });
@@ -239,12 +277,13 @@ function busyLabel(phase: RoomView["phase"], t: T, secret?: RoomView["secret"]) 
   }
 }
 
-const PlayerCard = memo(function PlayerCard({ p, cls, state, isMe, menu, timer }: { p: PlayerView; cls: string; state: string; isMe: boolean; menu: boolean; timer?: TimerView }) {
+const PlayerCard = memo(function PlayerCard({ p, cls, state, isMe, menu, timer, badge }: { p: PlayerView; cls: string; state: string; isMe: boolean; menu: boolean; timer?: TimerView; badge?: Badge }) {
   const drain = useDrainStyle(timer);
   const t = useT();
   return (
     <div className={`podium ${cls}`} onContextMenu={menu ? (e) => { e.preventDefault(); openPersonMenu(p.id, e.clientX, e.clientY); } : undefined}>
       <span className="flag">{t.room.answering}</span>
+      {badge && <span className={`stake-tag ${badge.tone ?? ""}`} title={badge.title}>{badge.text}</span>}
       {menu && <MoreButton id={p.id} label={t.menu.title(p.name)} className="on-card" />}
       <span className="pic"><img src={avatarSrc(p)} alt="" /><LinkMark p={p} /></span>
       <span className="name" title={p.name}>{p.name}{isMe && <span className="you-tag">{t.you}</span>}</span>

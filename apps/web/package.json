@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:p2p": "vite --mode p2p --port 5174",
-    "build:pages": "vite build --mode p2p",
+    "build:pages": "vite build --mode p2p && node -e \"require('fs').copyFileSync('dist/index.html','dist/404.html')\"",
     "build": "vite build",
     "preview": "vite preview"
   },
