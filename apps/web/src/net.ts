@@ -2,6 +2,7 @@ import { tr } from "./i18n.ts";
 import { preloadRound, stopPreload } from "./preload.ts";
 import { onHave, onRtc, onSwarm, preparePack, setupShare, ShareError, stopShare } from "./share.ts";
 import { useSyncExternalStore } from "react";
+import type { JoinState } from "./p2p.ts";
 import type { LobbyStats, ChatItem, ClientMsg, Gender, RoomSummary, RoomView, ServerMsg } from "@kvz/protocol";
 
 declare global {
@@ -28,6 +29,8 @@ export interface State {
   link?: "far" | "lost";
   /** The last error the server sent (to react to some, e.g. a password is needed). */
   lastError?: { key?: string; at: number };
+  /** Peer mode: joining a room, step by step, or why it didn't work. */
+  joining?: JoinState;
   /** Pack upload in progress from this client. */
   upload?: { name: string; progress: number; convert?: { done: number; total: number } };
 }
@@ -195,6 +198,7 @@ export function connect() {
         id: peerId(), name: profile.name, gender: profile.gender, avatar: profile.avatar,
         deliver: onMessage, notify: (t) => toast(tr().tx(t), "info"), onDemoPack: (id) => void useDemoPack(id), onAvatars: avatarsArrived,
         onLink: (s) => set({ link: s === "ok" ? undefined : s }),
+        onJoin: (j) => set({ joining: j }),
       });
       set({ status: "open" });
     });
@@ -262,7 +266,7 @@ function onMessage(raw: ServerMsg) {
       // serverNow changes every message; keep it out of the shared tree so unchanged rooms stay identical.
       const room = share(state.room, { ...rest, serverNow: 0 });
       const offset = serverNow - Date.now();
-      set({ room, offset: Math.abs(offset - state.offset) > 150 ? offset : state.offset });
+      set({ room, joining: undefined, offset: Math.abs(offset - state.offset) > 150 ? offset : state.offset });
       return flushPendingPack(room);
     }
     case "preload":
@@ -314,6 +318,9 @@ export function enterPreview(room: RoomView, chat: ChatItem[]) {
 export function send(m: ClientMsg) {
   if (!rawSend(m)) toast(tr().noConnection);
 }
+
+/** Closes the joining card after a failed attempt. */
+export function clearJoining() { set({ joining: undefined }); }
 
 export function toast(text: string, tone: "bad" | "info" = "bad") { set({ toast: { text, at: Date.now(), tone } }); }
 

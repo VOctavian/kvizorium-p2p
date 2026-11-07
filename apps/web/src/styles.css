@@ -999,3 +999,15 @@ body { padding: 0; background: radial-gradient(120% 90% at 85% -10%, rgba(138,12
 .stage.compact .podium.seat-free .pic { grid-row: auto; width: auto; min-height: 0; background: none; padding: 0; }
 .stage.compact .podiums > .podium.seat-add { flex: 0 0 auto; min-height: 0; padding: 6px 12px; display: flex; gap: 6px; align-items: center; }
 .stage.compact .podium.seat-add span { font-size: 18px; }
+
+/* Peer mode: the joining card */
+.join-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.join-steps li { display: flex; align-items: center; gap: 10px; color: var(--text-faint); }
+.join-steps li::before { content: ""; flex: none; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--line-2); }
+.join-steps li.done { color: var(--text-dim); }
+.join-steps li.done::before { background: var(--good); border-color: var(--good); }
+.join-steps li.now { color: var(--text); font-weight: 700; }
+.join-steps li.now::before { display: none; }
+.join-steps .spinner { width: 14px; height: 14px; }
+.warn-note { color: var(--amber); }
+.join-why { margin: 0; line-height: 1.45; }

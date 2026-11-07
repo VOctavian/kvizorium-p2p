@@ -43,6 +43,9 @@ const KEEPER_SILENT = 7000;
  */
 const JOIN_WAIT = 15_000;
 const JOIN_WAIT_LISTED = 35_000;
+/** After the request to join reached the keeper: ask again every 10 s, give up after 30 s. */
+const JOIN_ASK_AGAIN = 10_000;
+const JOIN_GIVE_UP = 30_000;
 /** A room not announced for this long leaves the list. */
 const LISTED_TTL = 35_000;
 const ANNOUNCE_MS = 10_000;
@@ -69,25 +72,28 @@ const FAR_STATE_MS = 20_000;
 
 let me = { id: "", name: "", gender: undefined as Gender | undefined };
 let deliver: (m: ServerMsg) => void = () => {};
-let notify: (t: Text) => void = () => {};
 let onDemoPack: (id: string) => void = () => {};
 let onAvatars: () => void = () => {};
 /** How this browser hears its room: fine, through the relays, or not at all for now. */
 export type LinkState = "ok" | "far" | "lost";
 let onLink: (s: LinkState) => void = () => {};
+/** Joining a room, step by step (for the card on the games list); `fail` says why it didn't work. */
+export interface JoinState { code: string; stage: "search" | "found" | "asked"; far: boolean; relays: number; since: number; fail?: Text }
+let onJoin: (j: JoinState | undefined) => void = () => {};
 let demoPacks: { id: string; name: string }[] = [];
 
 export function start(opts: {
   id: string; name: string; gender?: Gender; avatar?: string;
   deliver: (m: ServerMsg) => void; notify: (t: Text) => void; onDemoPack: (id: string) => void; onAvatars: () => void;
   onLink?: (s: LinkState) => void;
+  onJoin?: (j: JoinState | undefined) => void;
 }) {
   me = { id: opts.id, name: opts.name, gender: opts.gender };
   deliver = opts.deliver;
-  notify = opts.notify;
   onDemoPack = opts.onDemoPack;
   onAvatars = opts.onAvatars;
   if (opts.onLink) onLink = opts.onLink;
+  if (opts.onJoin) onJoin = opts.onJoin;
   onMissingPicture(wantPicture);
   if (opts.avatar) void setMyAvatar(opts.avatar);
   openBoard();
@@ -326,6 +332,10 @@ interface Game {
   users: Map<string, User>;
   sentRev: number;
   joining?: { password?: string; asViewer?: boolean; timer: ReturnType<typeof setTimeout> };
+  /** The request to join went to the keeper: when, how many times, and what it said. */
+  joinAsk?: { at: number; tries: number; password?: string; asViewer?: boolean };
+  /** Reports the joining's progress every second until this browser is in. */
+  joinTick?: ReturnType<typeof setInterval>;
   /** Last time the keeper looked at who is online and swept out the long gone. */
   sweptAt: number;
   inRoom: boolean;
@@ -847,6 +857,7 @@ function keeperFound(g: Game) {
     clearTimeout(g.joining.timer);
     const { password, asViewer } = g.joining;
     g.joining = undefined;
+    g.joinAsk = { at: Date.now(), tries: 1, password, asViewer };
     toKeeper(g, { t: "joinRoom", roomId: g.code, password, asViewer });
     const a = avatars.get(me.id);
     if (a && g.keeper !== me.id) post(g, g.keeper, "av", { u: me.id, ...a });
@@ -1028,7 +1039,6 @@ function joinGame(code: string, password: string | undefined, asViewer: boolean 
   if (game?.code === code) return;
   if (game) leaveGame();
   const g = openGame(code);
-  if (!quiet) notify(text("ev.joiningRoom", { code }));
   g.joining = {
     password, asViewer,
     // Nobody answers: bring the room back from this browser's copy, or give up.
@@ -1039,8 +1049,7 @@ function joinGame(code: string, password: string | undefined, asViewer: boolean 
         // Someone else still keeps it (it's on the board): this browser just can't get through.
         // Bringing back its own copy would split the room in two.
         if (alive(code) || !copy) {
-          deliver(errorMsg(text(alive(code) ? "err.noRoute" : "err.roomLost")));
-          closeGame(g);
+          failJoin(g, !openRelays() ? text("err.noRelays") : alive(code) ? text("err.noRoute") : text("err.roomLost", { code }));
           return;
         }
         g.pack = copy.pack;
@@ -1049,6 +1058,38 @@ function joinGame(code: string, password: string | undefined, asViewer: boolean 
       });
     }, alive(code) ? JOIN_WAIT_LISTED : JOIN_WAIT),
   };
+  g.joinTick = setInterval(() => joinProgress(g), 1000);
+  joinProgress(g);
+}
+
+/** Relays this browser is connected to (they carry the games list and the spare route). */
+const openRelays = () => [...boardSockets.values()].filter((ws) => ws.readyState === WebSocket.OPEN).length;
+
+/** Where the joining is; asks the keeper again if it doesn't answer, and gives up in the end. */
+function joinProgress(g: Game) {
+  if (game !== g) return;
+  if (g.inRoom || g.room) { clearInterval(g.joinTick); g.joinTick = undefined; onJoin(undefined); return; }
+  const stage = g.joinAsk ? "asked" : g.keeper || g.peers.size || g.far.size || alive(g.code) ? "found" : "search";
+  const far = !g.peers.size && (g.far.size > 0 || (!!g.keeper && isFar(g, g.keeper)));
+  onJoin({ code: g.code, stage, far, relays: openRelays(), since: g.openedAt });
+  const ask = g.joinAsk;
+  if (!ask) return;
+  const waited = Date.now() - ask.at;
+  if (waited > JOIN_GIVE_UP) { failJoin(g, text("err.noAnswer")); return; }
+  // The request or its answer may have been lost on the way: ask again now and then.
+  if (waited > JOIN_ASK_AGAIN * ask.tries) {
+    ask.tries++;
+    toKeeper(g, { t: "joinRoom", roomId: g.code, password: ask.password, asViewer: ask.asViewer });
+  }
+}
+
+/** The joining didn't work: say why (on the card and in a toast) and leave the room's mesh. */
+function failJoin(g: Game, why: Text) {
+  const stage = g.joinAsk ? "asked" : g.keeper || g.peers.size || alive(g.code) ? "found" : "search";
+  const state: JoinState = { code: g.code, stage, far: !g.peers.size && g.far.size > 0, relays: openRelays(), since: g.openedAt, fail: why };
+  deliver(errorMsg(why));
+  closeGame(g);
+  onJoin(state);
 }
 
 /** Leaves the room for good (the others carry on without this browser). */
@@ -1062,6 +1103,7 @@ function leaveGame() {
     // The last one out: the room is deleted at once, from the list and from this browser's disk.
     if (!g.room.members.size) { announce(g, true); void dropCopy(g.code); }
   } else if (g.keeper) toKeeper(g, { t: "leaveRoom" });
+  if (g.joinTick) onJoin(undefined);
   localStorage.removeItem("kvz.p2p.current");
   // Let the last messages go out first.
   setTimeout(() => closeGame(g), 400);
@@ -1078,6 +1120,7 @@ function setLink(s: LinkState) {
 function closeGame(g: Game) {
   for (const t of g.timers) clearInterval(t);
   if (g.joining) clearTimeout(g.joining.timer);
+  if (g.joinTick) { clearInterval(g.joinTick); g.joinTick = undefined; if (!g.inRoom) onJoin(undefined); }
   if (g.farTimer) clearTimeout(g.farTimer);
   for (const ws of boardSockets.values()) if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(["CLOSE", g.farSub]));
   setLink("ok");

@@ -2,7 +2,7 @@ import { useT, type T } from "../i18n.ts";
 import { useEffect, useMemo, useState } from "react";
 import { roomNameKey, type RoomSummary, type Settings } from "@kvz/protocol";
 import { deletePreset, loadLastChoice, loadPresets, saveLastChoice, savePreset, type Preset } from "../createPrefs.ts";
-import { abs, PEER_MODE, send, setPendingPack, useStore } from "../net.ts";
+import { abs, clearJoining, PEER_MODE, send, setPendingPack, useStore } from "../net.ts";
 import { clearInvite, pendingInvite } from "../invite.ts";
 import { SettingsForm, settingsSummary, Stepper } from "../settings.tsx";
 import { LibraryButton } from "./Library.tsx";
@@ -164,6 +164,7 @@ export function Games({ onEditProfile, onSettings }: { onEditProfile: () => void
       </div>
 
       {creating && <CreateRoom onClose={() => setCreating(false)} />}
+      <JoinStatus />
       {joining && (
         <JoinModal room={joining.room} askCode={!!joining.code} prefill={joining.prefill} onClose={() => setJoining(null)} />
       )}
@@ -309,6 +310,45 @@ function CreateRoom({ onClose }: { onClose: () => void }) {
 const LOOKALIKE: Record<string, string> = { А: "A", В: "B", Е: "E", К: "K", М: "M", Н: "H", О: "O", Р: "P", С: "C", Т: "T", Х: "X", У: "Y", З: "3", Ч: "4", Б: "6" };
 function normalizeCode(s: string): string {
   return [...s.toUpperCase().replace(/[\s-]+/g, "")].map((c) => LOOKALIKE[c] ?? c).join("").slice(0, 4);
+}
+
+/** Peer mode: what the joining is doing right now, and why it failed if it did. */
+function JoinStatus() {
+  const j = useStore((s) => s.joining);
+  const t = useT();
+  const now = useNow(1000);
+  if (!j) return null;
+  const J = t.join;
+  const secs = Math.max(0, Math.round((now - j.since) / 1000));
+  if (j.fail) {
+    return (
+      <Modal title={J.failed(j.code)} onClose={clearJoining}>
+        <p className="join-why">{t.tx(j.fail)}</p>
+        <div className="foot">
+          <button type="button" className="btn ghost" onClick={clearJoining}>{J.close}</button>
+          <button type="button" className="btn primary" onClick={() => { clearJoining(); send({ t: "joinRoom", roomId: j.code }); }}>{J.retry}</button>
+        </div>
+      </Modal>
+    );
+  }
+  const steps: [typeof j.stage, string][] = [["search", J.search], ["found", J.found], ["asked", J.asked]];
+  const at = steps.findIndex(([s]) => s === j.stage);
+  return (
+    <Modal title={J.title(j.code)} onClose={() => send({ t: "leaveRoom" })}>
+      <ol className="join-steps">
+        {steps.map(([s, label], i) => (
+          <li key={s} className={i < at ? "done" : i === at ? "now" : ""}>{i === at && <span className="spinner" aria-hidden="true" />}{label}</li>
+        ))}
+      </ol>
+      {!j.relays && <p className="note warn-note">{J.noRelays}</p>}
+      {j.far && <p className="note">{J.far}</p>}
+      {secs >= 10 && <p className="note">{J.slow}</p>}
+      <div className="foot">
+        <span className="faint">{J.seconds(secs)}</span>
+        <button type="button" className="btn ghost" onClick={() => send({ t: "leaveRoom" })}>{t.cancel}</button>
+      </div>
+    </Modal>
+  );
 }
 
 function JoinModal({ room, askCode, prefill, onClose }: { room?: RoomSummary; askCode: boolean; prefill?: string; onClose: () => void }) {
