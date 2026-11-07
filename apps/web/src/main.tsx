@@ -6,5 +6,5 @@ import { initPrefs } from "./prefs.ts";
 
 initPrefs();
 
-if (loadProfile() && location.hash !== "#showcase") connect();
+if (loadProfile()) connect();
 createRoot(document.getElementById("root")!).render(<App />);

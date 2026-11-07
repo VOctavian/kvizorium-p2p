@@ -2,7 +2,7 @@ import { useT, type T } from "../i18n.ts";
 import { useEffect, useMemo, useState } from "react";
 import { roomNameKey, type RoomSummary, type Settings } from "@kvz/protocol";
 import { deletePreset, loadLastChoice, loadPresets, saveLastChoice, savePreset, type Preset } from "../createPrefs.ts";
-import { abs, clearJoining, PEER_MODE, send, setPendingPack, useStore } from "../net.ts";
+import { abs, clearJoining, PEER_MODE, resetAndReconnect, send, setPendingPack, useStore } from "../net.ts";
 import { clearInvite, pendingInvite } from "../invite.ts";
 import { SettingsForm, settingsSummary, Stepper } from "../settings.tsx";
 import { LibraryButton } from "./Library.tsx";
@@ -16,6 +16,7 @@ export function Games({ onEditProfile, onSettings }: { onEditProfile: () => void
   const [q, setQ] = useState("");
   const [f, setF] = useState<Filters>(loadFilters);
   const [moreFilters, setMoreFilters] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [sel, setSel] = useState<string | undefined>();
   const [creating, setCreating] = useState(false);
   const now = useNow(30_000);
@@ -69,7 +70,6 @@ export function Games({ onEditProfile, onSettings }: { onEditProfile: () => void
             {me?.avatar && <img src={abs(me.avatar)} alt="" />}<b>{me?.name ?? "…"}</b>
           </button>
           <button className="chip" onClick={onSettings}>{t.settings}</button>
-          <button className="chip" onClick={() => { location.hash = "showcase"; location.reload(); }}>{t.games.showcase}</button>
           <button className="chip" onClick={toggleFullscreen} title={t.fullscreenHint} aria-label={t.fullscreen}>⛶</button>
         </header>
 
@@ -78,6 +78,8 @@ export function Games({ onEditProfile, onSettings }: { onEditProfile: () => void
             <div className="panel games-list">
               <div className="toolbar">
                 <input className="input" id="room-search" type="search" placeholder={t.games.search} value={q} onChange={(e) => setQ(e.target.value)} aria-label={t.games.searchLabel} />
+                <button type="button" className="btn ghost refresh-btn" disabled={resetting} title={t.games.refreshHint} aria-label={t.games.refresh}
+                  onClick={() => { setResetting(true); void resetAndReconnect(); }}><span className={resetting ? "spin" : ""} aria-hidden="true">⟳</span></button>
               </div>
               <div className="quick-filters" role="group" aria-label={t.games.filters}>
                 <Seg value={f.status} onChange={(v) => patchF({ status: v })} options={[["all", t.games.all], ["wait", t.games.wait], ["play", t.games.play]]} />

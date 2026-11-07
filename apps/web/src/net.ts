@@ -3,6 +3,7 @@ import { preloadRound, stopPreload } from "./preload.ts";
 import { onHave, onRtc, onSwarm, preparePack, setupShare, ShareError, stopShare } from "./share.ts";
 import { useSyncExternalStore } from "react";
 import type { JoinState } from "./p2p.ts";
+import { BASE_PATH } from "./invite.ts";
 import type { LobbyStats, ChatItem, ClientMsg, Gender, RoomSummary, RoomView, ServerMsg } from "@kvz/protocol";
 
 declare global {
@@ -178,7 +179,6 @@ async function useDemoPack(id: string) {
 
 /** Sends without complaining; false when there is no connection. */
 function rawSend(m: ClientMsg): boolean {
-  if (preview) return true;
   if (PEER_MODE) { peer?.send(m); return !!peer; }
   if (ws?.readyState !== WebSocket.OPEN) return false;
   ws.send(JSON.stringify(m));
@@ -306,13 +306,28 @@ let reactSeq = 0;
 const reactionListeners = new Set<(r: Reaction) => void>();
 export function onReaction(l: (r: Reaction) => void) { reactionListeners.add(l); return () => { reactionListeners.delete(l); }; }
 
-/** Showcase mode: a made-up room is shown and nothing is sent anywhere. */
-let preview = false;
-export function enterPreview(room: RoomView, chat: ChatItem[]) {
-  preview = true;
-  wanted = false;
-  ws?.close();
-  set({ room, chat, me: { id: room.me.id, name: "Вы" }, offset: 0, status: "open" });
+/**
+ * "Refresh" on the games list: everything this browser saved goes (room copies, cached pack files,
+ * the room to come back to, TURN and other caches) except the settings and the account, and the
+ * page starts afresh with a new connection.
+ */
+const KEEP = new Set([
+  // settings
+  "kvz.prefs", "kvz.fx", "kvz.games.filters", "kvz.create.last", "kvz.create.presets", "kvz.server", "kvz.sib", "kvz.turn",
+  // the account: name, picture, and who this browser is
+  "kvz.name", "kvz.gender", "kvz.avatar", "kvz.p2p.id", "kvz.token",
+]);
+export async function resetAndReconnect() {
+  if (state.room) rawSend({ t: "leaveRoom" });
+  try { for (const k of Object.keys(localStorage)) if (k.startsWith("kvz.") && !KEEP.has(k)) localStorage.removeItem(k); } catch { /* storage blocked */ }
+  try { sessionStorage.clear(); } catch { /* storage blocked */ }
+  // A database still open in this page is deleted as soon as the page goes; don't wait for that.
+  const drop = (name: string) => new Promise<void>((ok) => {
+    try { const r = indexedDB.deleteDatabase(name); r.onsuccess = r.onerror = r.onblocked = () => ok(); } catch { ok(); }
+  });
+  await Promise.race([Promise.all([drop("kvz-p2p"), drop("kvz-share")]), new Promise((ok) => setTimeout(ok, 1500))]);
+  try { for (const k of await caches.keys()) await caches.delete(k); } catch { /* no cache storage */ }
+  location.replace(BASE_PATH);
 }
 
 export function send(m: ClientMsg) {

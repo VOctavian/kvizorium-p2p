@@ -605,9 +605,6 @@ button.theme { cursor: pointer; justify-content: space-between; }
   .q-body > .media-row img, .q-body > .media-row video { max-height: 100%; }
 }
 
-/* Showcase (#showcase) */
-.showcase-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 8px 12px; border-radius: 16px; background: rgba(26, 33, 80, .85); border: 1px solid var(--line-2); }
-.showcase-bar b { font-family: var(--font-display); margin-right: 4px; }
 
 /* The answer's media take the question's place at the reveal */
 .q-card .reveal:has(.q-media) { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
@@ -817,7 +814,6 @@ body { padding: 0; background: radial-gradient(120% 90% at 85% -10%, rgba(138,12
 .shell { min-height: 100vh; min-height: 100dvh; gap: 0; }
 .stage, [data-fx="high"] .stage { flex: 1; border: 0; border-radius: 0; box-shadow: none; background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none;
   padding: 14px max(16px, env(safe-area-inset-right, 0px)) 16px max(16px, env(safe-area-inset-left, 0px)); }
-.showcase-bar { border-radius: 0; border-width: 0 0 1px; }
 .welcome { min-height: 100vh; min-height: 100dvh; padding: 16px; }
 @media (min-width: 900px) and (min-height: 560px) {
   body { padding-block: 0; }
@@ -1011,3 +1007,9 @@ body { padding: 0; background: radial-gradient(120% 90% at 85% -10%, rgba(138,12
 .join-steps .spinner { width: 14px; height: 14px; }
 .warn-note { color: var(--amber); }
 .join-why { margin: 0; line-height: 1.45; }
+
+/* Refresh next to the room search */
+.toolbar:has(.refresh-btn) { display: flex; gap: 8px; align-items: center; }
+.toolbar:has(.refresh-btn) .input { flex: 1; min-width: 0; }
+.refresh-btn { flex: none; width: 42px; padding: 0; display: grid; place-items: center; font-size: 20px; line-height: 1; align-self: stretch; }
+.refresh-btn .spin { display: inline-block; animation: spin .9s linear infinite; }

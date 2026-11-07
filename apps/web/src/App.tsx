@@ -3,7 +3,6 @@ import { PEER_MODE, connect, loadProfile, send, useStore, type Profile } from ".
 import { ProfileForm } from "./profile.tsx";
 import { Games } from "./screens/Games.tsx";
 import { RoomScreen } from "./screens/Room.tsx";
-import { Showcase } from "./screens/Showcase.tsx";
 import { SettingsPanel } from "./screens/Side.tsx";
 import { Modal } from "./ui.tsx";
 import { useT } from "./i18n.ts";
@@ -19,9 +18,8 @@ export function App() {
   useEffect(() => { const id = setTimeout(warmSounds, 3000); return () => clearTimeout(id); }, []);
   // The address bar shows the room's link while in it.
   const roomId = useStore((s) => s.room?.id);
-  useEffect(() => { if (location.hash !== "#showcase" && (roomId || !pendingInvite())) showRoomInUrl(roomId); }, [roomId]);
+  useEffect(() => { if (roomId || !pendingInvite()) showRoomInUrl(roomId); }, [roomId]);
 
-  if (location.hash === "#showcase") return <Showcase />;
   if (!profile) return <Welcome onDone={(p) => { setProfile(p); connect(); }} />;
   return (
     <div className="shell">

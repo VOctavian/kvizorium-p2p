@@ -41,10 +41,6 @@ npx tsx tools/bot.ts КОД_КОМНАТЫ "Бот Вася"
 
 Если игра тормозит, в профиле есть «Графика»: «Быстро» убирает анимацию фона, «Красиво» включает размытие стекла.
 
-### Витрина экранов
-
-Откройте `http://localhost:5173/#showcase` (или «Витрина экранов» в шапке списка игр): настоящие экраны игры на выдуманных данных для каждого типа вопроса — текст, текст + медиа, кот в мешке, вопрос для всех (текстом и кнопками), аукцион, ставка для всех — по шагам, глазами игрока или ведущего. Ничего не отправляется на сервер.
-
 ### Совместимость с .siq
 
 Типы вопросов SIGame (`SIPackages/Core/QuestionTypes.cs`): `simple`/`withButton`/пустой → обычный; `stake` и старый `auction` → аукцион; `stakeAll` → ставка для всех; `secret`, `secretPublicPrice`, `secretNoQuestion` и старые `cat`/`bagcat` → кот в мешке; `noRisk`/`forYourself` и старый `sponsored` → без риска; `forAll` → вопрос для всех. Параметры: `question`, `answer`, `theme`, `price` (`numberSet`), `selectionMode`, `answerType` (`text`, `number`, `select`), `answerOptions`, `answerDeviation`. Не поддержаны пока `answerType="point"` (ответ точкой на картинке) и `answerDuration`.
